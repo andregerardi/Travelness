@@ -1,0 +1,7 @@
+data/
+__pycache__/
+*.pyc
+.env
+node_modules
+.build-web.js
+.git-commit-msg.txt

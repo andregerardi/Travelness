@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#1f3a5f" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#f4f6fa" media="(prefers-color-scheme: light)" />
+  <meta name="description" content="Fotografe cupons fiscais e gere a planilha e o PDF da prestação de contas da viagem." />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Travelness" />
+  <title>Travelness · Prestação de contas</title>
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" href="{{ url_for('static', filename='icon.svg') }}" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='icon-180.png') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ v }}" />
+  <script>window.__TRAVELNESS__ = {{ state | tojson }};</script>
+</head>
+<body>
+  <div id="root">
+    <!-- Esqueleto renderizado pelo Jinja2: a tela já aparece preenchida antes do React montar. -->
+    <div class="app">
+      <div class="topbar">
+        <div style="flex:1">
+          <h1>Travelness<span class="sub">Prestação de contas de viagens</span></h1>
+        </div>
+      </div>
+      {% if state.trips %}
+        <div class="list">
+          {% for t in state.trips %}
+          <div class="trip">
+            <div style="display:flex;gap:10px;align-items:baseline">
+              <h3 style="flex:1">{{ t.projeto }}</h3>
+              <span class="amount">R$ {{ '%.2f'|format(t.total)|replace('.', ',') }}</span>
+            </div>
+            <div class="meta">
+              <span>{{ t.qtd }} cupom{{ 's' if t.qtd != 1 else '' }}</span>
+              {% if t.pendentes %}<span class="chip warn">{{ t.pendentes }} a conferir</span>{% endif %}
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="empty">
+          <h3>Carregando…</h3>
+          <p>Preparando sua prestação de contas.</p>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+  <noscript>
+    <p style="padding:24px;text-align:center">O Travelness precisa de JavaScript ativado.</p>
+  </noscript>
+  <script type="module" src="{{ url_for('static', filename='app.js') }}?v={{ v }}"></script>
+</body>
+</html>
