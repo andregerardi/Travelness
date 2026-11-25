@@ -104,8 +104,12 @@ const Icon = ({ name, size = 20 }) => (
  * de static/logo.png, para a marca aparecer também offline. Se não houver
  * arquivo, o componente simplesmente não renderiza nada.
  */
+/* A marca é um lockup horizontal (350x27): ao lado do título ela ocuparia a
+   barra inteira num celular. Vai numa faixa própria acima, que rola junto com
+   a página e deixa a barra de navegação fixa logo abaixo. O fundo é branco
+   porque o azul da marca desapareceria no tema escuro. */
 const Logo = () => (LOGO
-  ? <span className="brand"><img src={LOGO} alt={LOGO_ALT} /></span>
+  ? <div className="brandbar"><img src={LOGO} alt={LOGO_ALT} /></div>
   : null);
 
 /* ------------------------------------------------------------------ base UI */
@@ -646,7 +650,6 @@ function Home({ trips, profile, onOpen, onNew, onProfile, onSettings }) {
   return (
     <>
       <div className="topbar">
-        <Logo />
         <div style={{ flex: 1, minWidth: 0 }}>
           <h1>Travelness<span className="sub">Prestação de contas de viagens</span></h1>
         </div>
@@ -1052,6 +1055,7 @@ function App() {
   if (!boot) {
     return (
       <div className="app">
+        <Logo />
         <div className="topbar"><h1>Travelness<span className="sub">carregando…</span></h1></div>
         {[1, 2].map((i) => <div key={i} className="skel" style={{ marginBottom: 12 }} />)}
       </div>
@@ -1062,6 +1066,7 @@ function App() {
 
   return (
     <div className="app">
+      <Logo />
       {tripId ? (
         <TripView tripId={tripId} profile={profile} features={features} push={push}
                   onBack={back} onTripsChanged={reloadTrips} />

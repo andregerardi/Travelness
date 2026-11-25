@@ -66,15 +66,19 @@ a { color: var(--accent); }
 .iconbtn.ghost { border-color: transparent; background: transparent; }
 
 /* ---------- marca institucional ---------- */
-.brand {
-  display: inline-flex; align-items: center; justify-content: center;
-  flex: 0 0 auto; height: 34px; padding: 4px 8px; border-radius: 8px;
-  /* a logo é azul-escura: sobre fundo escuro ela sumiria, então vai sobre
-     uma faixa branca — é como a marca costuma ser aplicada nesses casos */
-  background: #fff; box-shadow: inset 0 0 0 1px var(--line);
+.brandbar {
+  display: flex; align-items: center;
+  margin: 0 -16px;
+  padding: max(10px, env(safe-area-inset-top)) 16px 9px;
+  /* a marca é azul-escura: sobre o tema escuro ela sumiria, então a faixa
+     é branca — é como a FGV aplica a marca sobre fundos escuros */
+  background: #fff;
+  border-bottom: 1px solid var(--line);
 }
-.brand img { height: 26px; width: auto; display: block; }
-@media (max-width: 380px) { .brand { height: 30px; } .brand img { height: 22px; } }
+.brandbar img { height: 20px; width: auto; display: block; }
+@media (max-width: 360px) { .brandbar img { height: 17px; } }
+/* com a faixa acima, a barra fixa não precisa repetir o recuo do notch */
+.brandbar + .topbar { padding-top: 12px; }
 
 /* ---------- cards ---------- */
 .card {
