@@ -1,7 +1,7 @@
 /* Extração estruturada do texto do cupom. Port fiel de ocr.py — mesmas regras,
    para que o resultado seja igual rodando no servidor ou no navegador. */
 
-export const CATEGORIAS = ["alimentacao", "combustivel", "transporte", "outros"];
+export const CATEGORIAS = ["alimentacao", "combustivel", "transporte", "estacionamento", "outros"];
 
 export const stripAccents = (s) => (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "");
 export const norm = (s) => stripAccents(s).toUpperCase();
@@ -192,7 +192,14 @@ const KEYWORDS = {
     UBER: 6, TAXI: 6, TAXIMETRO: 6, CORRIDA: 5, CABIFY: 6, INDRIVE: 6, "99POP": 6,
     "99 TECNOLOGIA": 6, "99TAXI": 6, MOTORISTA: 4, PASSAGEIRO: 4, BANDEIRA: 3, PLACA: 2,
     EMBARQUE: 2, DESEMBARQUE: 3, ORIGEM: 2, DESTINO: 2, "KM RODADO": 3, VIAGEM: 1,
-    TRANSPORTE: 3, COOPERATIVA: 2, PEDAGIO: 3, ESTACIONAMENTO: 2,
+    TRANSPORTE: 3, COOPERATIVA: 2, PEDAGIO: 3,
+  },
+  estacionamento: {
+    ESTACIONAMENTO: 7, ESTAPAR: 7, MULTIPARK: 6, "PARK ": 4, PARKING: 6, AUTOPARK: 6,
+    "ZONA AZUL": 6, "ROTATIVO ": 5, VALET: 6, MANOBRISTA: 5, GARAGEM: 5, "VAGA ": 3,
+    "PATIO ": 3, "ENTRADA ": 1, "SAIDA ": 1, PERMANENCIA: 5, DIARIA: 2,
+    "1A HORA": 4, "HORA ADICIONAL": 6, "HORAS ADICIONAIS": 6, "TEMPO DE PERMANENCIA": 7,
+    "TOLERANCIA": 4, "CARTAO DE ESTACIONAMENTO": 7, "SHOPPING": 1,
   },
   alimentacao: {
     RESTAURANTE: 6, LANCHONETE: 6, PADARIA: 5, CAFE: 3, CAFETERIA: 5, REFEICAO: 6,
@@ -274,6 +281,8 @@ export function parseReceipt(text) {
     out.descricao = app ? `Corrida ${app}` : "Táxi";
   } else if (categoria === "alimentacao") {
     out.descricao = mealFromTime(hora);
+  } else if (categoria === "estacionamento") {
+    out.descricao = "Estacionamento" + (estab ? ` – ${estab}` : "");
   } else {
     out.descricao = estab;
   }

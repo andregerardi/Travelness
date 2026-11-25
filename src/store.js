@@ -72,7 +72,8 @@ const TRIP_DEFAULTS = {
 function summarize(trip, receipts) {
   const t = {
     ...trip, qtd: receipts.length, total: 0, pendentes: 0,
-    total_alimentacao: 0, total_combustivel: 0, total_transporte: 0, total_outros: 0,
+    total_alimentacao: 0, total_combustivel: 0, total_transporte: 0,
+    total_estacionamento: 0, total_outros: 0,
   };
   for (const r of receipts) {
     t.total += r.valor;
@@ -108,11 +109,19 @@ function cleanTrip(data) {
   return v;
 }
 
+/** O período precisa fazer sentido venha de onde vier — formulário, API ou import. */
+function checkPeriod(trip) {
+  if (trip.data_inicio && trip.data_fim && trip.data_fim < trip.data_inicio) {
+    throw new Error("A data de fim não pode ser anterior à de início.");
+  }
+}
+
 export async function createTrip(data) {
   const v = cleanTrip(data);
   if (!v.projeto) throw new Error("Informe o nome do projeto.");
   const now = new Date().toISOString();
   const rec = { ...TRIP_DEFAULTS, ...v, created_at: now, updated_at: now };
+  checkPeriod(rec);
   const id = await tx(["trips"], "readwrite", (t) => wrap(t.objectStore("trips").add(rec)));
   return summarize({ ...rec, id }, []);
 }
@@ -133,7 +142,10 @@ export async function updateTrip(id, data) {
   await tx(["trips"], "readwrite", async (t) => {
     const s = t.objectStore("trips");
     const cur = await wrap(s.get(id));
-    if (cur) await wrap(s.put({ ...cur, ...v, updated_at: new Date().toISOString() }));
+    if (!cur) return;
+    const next = { ...cur, ...v, updated_at: new Date().toISOString() };
+    checkPeriod(next);   // valida o resultado, não só os campos enviados
+    await wrap(s.put(next));
   });
   return (await getTrip(id)).trip;
 }
@@ -158,7 +170,7 @@ const RECEIPT_DEFAULTS = {
   descricao: "", origem: "", destino: "", litros: null, km: null,
   image_key: "", image_hash: "", ocr_text: "", confianca: 0, revisar: 1,
 };
-const CATEGORIAS = ["alimentacao", "combustivel", "transporte", "outros"];
+const CATEGORIAS = ["alimentacao", "combustivel", "transporte", "estacionamento", "outros"];
 
 function cleanReceipt(data) {
   const v = {};

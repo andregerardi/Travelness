@@ -124,9 +124,19 @@ usar o app não precisa de nada.
 | Categoria | dicionário ponderado de termos (posto, litros, Uber, taxímetro, restaurante…) com desempate |
 | Descrição | refeição pela hora (café/almoço/lanche/jantar), app de transporte pelo nome, "Abastecimento" para combustível |
 
+| Categoria | `alimentacao`, `combustivel`, `transporte`, `estacionamento`, `outros` — estacionamento cobre recibo e cupom fiscal (Estapar, zona azul, valet, garagem) |
+
 Cada cupom recebe uma **confiança de 0 a 1**. Abaixo de 0,75, ou faltando valor/data, ele
-entra marcado como **"a conferir"** — selo laranja na lista, filtro próprio e aviso na tela de
-exportação. Nada é descartado em silêncio: na dúvida, o app pede revisão.
+ganha o selo laranja **"a conferir"**, com filtro próprio e aviso na exportação.
+
+**Toda leitura passa por conferência humana.** Depois de cada envio o app abre a fila de
+conferência mostrando a foto ao lado dos campos extraídos. Isso não é excesso de zelo: medimos
+que o Tesseract às vezes lê `13,50` como `13,56` — troca um dígito nos centavos — e relata
+confiança alta ao fazer isso. Testamos limiar global, nitidez prévia, confiança média do
+motor e dupla leitura com layouts diferentes; nenhum desses sinais separa de forma confiável
+o acerto do erro. Num documento financeiro, valor errado passando calado é pior do que um
+toque a mais, então a confirmação é o caminho normal — com "Conferir o resto depois" para
+quem está com pressa.
 
 Duplicatas são bloqueadas por três critérios: imagem idêntica (SHA-256), chave de acesso
 repetida ou mesmo CNPJ + data + valor.

@@ -32,6 +32,9 @@ export { backend } from "./backend.$1.js";
 EOF
 }
 
+echo "→ marca"
+node make-logo.mjs
+
 echo "→ versão servidor"
 gen_backend server
 "$ESBUILD" src/ui.jsx "${COMMON[@]}" "${MIN[@]}" --outfile=static/app.js

@@ -19,7 +19,8 @@ from reportlab.pdfgen import canvas
 from db import UPLOAD_DIR
 
 CAT_LABEL = {"alimentacao": "Alimentação", "combustivel": "Combustível",
-             "transporte": "Transporte", "outros": "Outros"}
+             "transporte": "Transporte", "estacionamento": "Estacionamento",
+             "outros": "Outros"}
 BRL = '"R$" #,##0.00'
 
 
@@ -183,7 +184,8 @@ def build_excel(profile, trip, receipts) -> bytes:
     _merge(ws, f"H{row}:H{row}", "Valor", font=WHITE_B, fill=HEAD_FILL, alignment=center)
     row += 1
     first = row
-    extras = sorted(by_cat["alimentacao"] + by_cat["outros"], key=lambda r: (r["data"] or "9", r["id"]))
+    extras = sorted(by_cat["alimentacao"] + by_cat["estacionamento"] + by_cat["outros"],
+                    key=lambda r: (r["data"] or "9", r["id"]))
     for r in extras or [None]:
         if r:
             ws[f"A{row}"] = to_date(r["data"])
@@ -352,20 +354,22 @@ def build_pdf(profile, trip, receipts) -> bytes:
 
     # totais por categoria
     y -= 4 * mm
-    bw = (W - 2 * M - 3 * 4 * mm) / 4
+    gap = 3 * mm
+    n_cat = len(CAT_LABEL)
+    bw = (W - 2 * M - (n_cat - 1) * gap) / n_cat
     tot_all = sum(r["valor"] for r in receipts)
     for i, (k, lbl) in enumerate(CAT_LABEL.items()):
-        x = M + i * (bw + 4 * mm)
+        x = M + i * (bw + gap)
         val = sum(r["valor"] for r in receipts if r["categoria"] == k)
         c.setStrokeColor(LINE)
         c.setFillColor(colors.HexColor("#F4F7FA"))
         c.roundRect(x, y - 16 * mm, bw, 16 * mm, 3 * mm, fill=1, stroke=1)
         c.setFillColor(MUTED)
-        c.setFont("Helvetica", 8)
-        c.drawString(x + 3 * mm, y - 6 * mm, lbl.upper())
+        c.setFont("Helvetica", 7)
+        c.drawString(x + 2.5 * mm, y - 6 * mm, lbl.upper())
         c.setFillColor(INK)
-        c.setFont("Helvetica-Bold", 11)
-        c.drawString(x + 3 * mm, y - 12.5 * mm, brl(val))
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(x + 2.5 * mm, y - 12.5 * mm, brl(val))
     y -= 24 * mm
     c.setFont("Helvetica-Bold", 13)
     c.drawString(M, y, f"Total geral: {brl(tot_all)}")

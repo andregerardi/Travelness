@@ -195,8 +195,8 @@ class Sheet {
 
 /* ------------------------------------------------------------------ layout */
 const CAT_LABEL = {
-  alimentacao: "Alimentação", combustivel: "Combustível",
-  transporte: "Transporte", outros: "Outros",
+  alimentacao: "Alimentação", combustivel: "Combustível", transporte: "Transporte",
+  estacionamento: "Estacionamento", outros: "Outros",
 };
 
 export function periodo(trip, receipts) {
@@ -316,7 +316,7 @@ function buildMain(profile, trip, receipts) {
   ws.mergeStr(`H${row}:H${row}`, "Valor", S.cabec);
   row++;
   first = row;
-  const extras = [...byCat.alimentacao, ...byCat.outros]
+  const extras = [...byCat.alimentacao, ...byCat.estacionamento, ...byCat.outros]
     .sort((a, b) => (a.data || "9").localeCompare(b.data || "9") || a.id - b.id);
   for (const r of extras.length ? extras : [null]) {
     if (r) {

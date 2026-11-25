@@ -20,6 +20,7 @@
   --cat-alimentacao: #e8743b;
   --cat-combustivel: #7a5af8;
   --cat-transporte: #0f9d6e;
+  --cat-estacionamento: #1f7a8c;
   --cat-outros: #7d889a;
   --radius: 16px;
   --radius-sm: 10px;
@@ -63,6 +64,17 @@ a { color: var(--accent); }
 }
 .iconbtn:active { transform: scale(.95); }
 .iconbtn.ghost { border-color: transparent; background: transparent; }
+
+/* ---------- marca institucional ---------- */
+.brand {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto; height: 34px; padding: 4px 8px; border-radius: 8px;
+  /* a logo é azul-escura: sobre fundo escuro ela sumiria, então vai sobre
+     uma faixa branca — é como a marca costuma ser aplicada nesses casos */
+  background: #fff; box-shadow: inset 0 0 0 1px var(--line);
+}
+.brand img { height: 26px; width: auto; display: block; }
+@media (max-width: 380px) { .brand { height: 30px; } .brand img { height: 22px; } }
 
 /* ---------- cards ---------- */
 .card {
@@ -112,7 +124,8 @@ input[type="file"] { display: none; }
 .check input { width: 22px; height: 22px; min-height: 0; accent-color: var(--accent); flex: 0 0 22px; }
 
 /* segmented control para categoria */
-.seg { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+@media (min-width: 480px) { .seg { grid-template-columns: repeat(5, 1fr); } }
 .seg button {
   border: 1px solid var(--line); background: var(--surface-2); border-radius: 12px; padding: 10px 4px;
   display: grid; gap: 4px; justify-items: center; font-size: 11.5px; font-weight: 600; color: var(--ink-2);
@@ -120,6 +133,7 @@ input[type="file"] { display: none; }
 }
 .seg button[aria-pressed="true"] { border-color: currentColor; background: var(--accent-soft); color: var(--accent); }
 .seg button svg { width: 20px; height: 20px; }
+.seg button span { line-height: 1.15; text-align: center; hyphens: auto; }
 
 /* ---------- listas ---------- */
 .list { display: flex; flex-direction: column; gap: 10px; }
@@ -160,15 +174,16 @@ input[type="file"] { display: none; }
 .chip.alimentacao { color: var(--cat-alimentacao); border-color: color-mix(in srgb, var(--cat-alimentacao) 30%, var(--line)); background: color-mix(in srgb, var(--cat-alimentacao) 9%, var(--surface)); }
 .chip.combustivel { color: var(--cat-combustivel); border-color: color-mix(in srgb, var(--cat-combustivel) 30%, var(--line)); background: color-mix(in srgb, var(--cat-combustivel) 9%, var(--surface)); }
 .chip.transporte  { color: var(--cat-transporte);  border-color: color-mix(in srgb, var(--cat-transporte) 30%, var(--line));  background: color-mix(in srgb, var(--cat-transporte) 9%, var(--surface)); }
+.chip.estacionamento { color: var(--cat-estacionamento); border-color: color-mix(in srgb, var(--cat-estacionamento) 30%, var(--line)); background: color-mix(in srgb, var(--cat-estacionamento) 9%, var(--surface)); }
 .chip.outros      { color: var(--cat-outros); }
 .chip.warn { color: var(--warn); background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 30%, var(--line)); }
 .chip.ok { color: var(--ok); background: var(--ok-soft); border-color: color-mix(in srgb, var(--ok) 25%, var(--line)); }
 
 /* ---------- totais ---------- */
 .totals { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-@media (min-width: 560px) { .totals { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 560px) { .totals { grid-template-columns: repeat(5, 1fr); } }
 .tot { background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
-.tot .k { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 700; }
+.tot .k { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 700; }
 .tot .v { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
 .grand {
   display: flex; align-items: baseline; justify-content: space-between; gap: 12px;

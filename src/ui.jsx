@@ -4,12 +4,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { backend } from "./backend.js";
+import { LOGO, LOGO_ALT } from "./logo.js";
 
 /* ------------------------------------------------------------------ util */
 const CATS = [
   { id: "alimentacao", label: "Alimentação", icon: "utensils" },
   { id: "combustivel", label: "Combustível", icon: "fuel" },
   { id: "transporte", label: "Transporte", icon: "car" },
+  { id: "estacionamento", label: "Estacionamento", icon: "parking" },
   { id: "outros", label: "Outros", icon: "tag" },
 ];
 const CAT_LABEL = Object.fromEntries(CATS.map((c) => [c.id, c.label]));
@@ -85,6 +87,7 @@ const PATHS = {
   receipt: "M5 3h14v18l-3-2-2 2-2-2-2 2-2-2-3 2zM9 8h6M9 12h6M9 16h3",
   pending: "M12 7v5l3 2M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z",
   briefcase: "M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM8 9V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v3M3 13h18",
+  parking: "M4 4h16v16H4zM9.5 16V8h3a2.5 2.5 0 0 1 0 5h-3",
   gear: "M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM19.4 13a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-3-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0-1.2-2.9H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.2-3l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 2.9-1.2V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 3 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0 1.2 2.9H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z",
   cloud: "M7 18a4 4 0 0 1-.4-8 5.5 5.5 0 0 1 10.6-1.3A3.8 3.8 0 0 1 18 18z",
 };
@@ -94,6 +97,16 @@ const Icon = ({ name, size = 20 }) => (
     <path d={PATHS[name] || ""} />
   </svg>
 );
+
+/* ------------------------------------------------------------------ marca */
+/**
+ * Logo institucional. O arquivo é embutido em base64 por build-docs.mjs a partir
+ * de static/logo.png, para a marca aparecer também offline. Se não houver
+ * arquivo, o componente simplesmente não renderiza nada.
+ */
+const Logo = () => (LOGO
+  ? <span className="brand"><img src={LOGO} alt={LOGO_ALT} /></span>
+  : null);
 
 /* ------------------------------------------------------------------ base UI */
 const Field = ({ label, hint, children }) => (
@@ -302,9 +315,13 @@ function TripSheet({ trip, onSaved, onClose, push }) {
   });
   const [saving, setSaving] = useState(false);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const periodoInvalido = !!(f.data_inicio && f.data_fim && f.data_fim < f.data_inicio);
 
   async function save() {
     if (!f.projeto.trim()) return push("Dê um nome ao projeto.", "err");
+    if (periodoInvalido) {
+      return push("A data de fim não pode ser anterior à de início.", "err");
+    }
     setSaving(true);
     try {
       const body = { ...f, adiantamento: parseMoneyInput(f.adiantamento) };
@@ -325,9 +342,23 @@ function TripSheet({ trip, onSaved, onClose, push }) {
                   placeholder="Ex.: Reuniões com as equipes de RH da Secretaria Estadual de Saúde em Aracaju." />
       </Field>
       <div className="row">
-        <Field label="Início"><input type="date" value={f.data_inicio || ""} onChange={set("data_inicio")} /></Field>
-        <Field label="Fim"><input type="date" value={f.data_fim || ""} onChange={set("data_fim")} /></Field>
+        <Field label="Início">
+          <input type="date" value={f.data_inicio || ""} max={f.data_fim || undefined}
+                 onChange={set("data_inicio")} />
+        </Field>
+        <Field label="Fim">
+          {/* min/max guiam o seletor nativo; o aviso abaixo cobre a digitação
+              manual, que escapa deles. Aceitamos o valor e barramos no salvar:
+              recusar a tecla faz a data sumir e o usuário não entende por quê. */}
+          <input type="date" value={f.data_fim || ""} min={f.data_inicio || undefined}
+                 aria-invalid={periodoInvalido} onChange={set("data_fim")} />
+        </Field>
       </div>
+      {periodoInvalido && (
+        <p className="hint" role="alert" style={{ color: "var(--danger)", margin: "-8px 2px 14px" }}>
+          A data de fim é anterior à de início.
+        </p>
+      )}
       <div className="row stack-sm">
         <Field label="Centro de custo"><input value={f.centro_custo} onChange={set("centro_custo")} /></Field>
         <Field label="Adiantamento recebido" hint="Deixe 0 se não houve.">
@@ -338,7 +369,7 @@ function TripSheet({ trip, onSaved, onClose, push }) {
         <input type="email" value={f.email_destinatario} onChange={set("email_destinatario")}
                placeholder="financeiro@organizacao.org" />
       </Field>
-      <button className="btn primary block" onClick={save} disabled={saving}>
+      <button className="btn primary block" onClick={save} disabled={saving || periodoInvalido}>
         {saving ? "Salvando…" : isNew ? "Criar viagem" : "Salvar alterações"}
       </button>
     </Sheet>
@@ -346,7 +377,18 @@ function TripSheet({ trip, onSaved, onClose, push }) {
 }
 
 /* ------------------------------------------------------------------ cupom */
-function ReceiptSheet({ receipt, onSaved, onDelete, onClose, push }) {
+/** O que o OCR não conseguiu resolver sozinho, em português claro. */
+function motivosDeRevisao(r) {
+  const m = [];
+  if (!r.valor) m.push("não achei o valor");
+  if (!r.data) m.push("não achei a data");
+  if (r.categoria === "outros") m.push("não reconheci o tipo de despesa");
+  if (!r.estabelecimento && !r.cnpj) m.push("não identifiquei o estabelecimento");
+  if (!m.length && r.confianca < 0.75) m.push("a leitura saiu com baixa confiança");
+  return m;
+}
+
+function ReceiptSheet({ receipt, onSaved, onDelete, onClose, push, review }) {
   const [f, setF] = useState({
     ...receipt,
     valor: receipt.valor ? String(receipt.valor).replace(".", ",") : "",
@@ -370,8 +412,8 @@ function ReceiptSheet({ receipt, onSaved, onDelete, onClose, push }) {
         litros: f.litros === "" ? null : parseMoneyInput(f.litros),
         km: f.km === "" ? null : parseMoneyInput(f.km),
       };
+      // quem fecha (ou avança para o próximo da fila) é o pai
       onSaved(await api(`/api/receipts/${receipt.id}`, { method: "PUT", body }));
-      onClose();
     } catch (e) { push(e.message, "err"); } finally { setSaving(false); }
   }
 
@@ -381,13 +423,29 @@ function ReceiptSheet({ receipt, onSaved, onDelete, onClose, push }) {
   }
 
   return (
-    <Sheet title="Conferir cupom" onClose={onClose}>
-      {!!receipt.revisar && (
-        <div className="banner">
-          <Icon name="warn" size={18} />
-          <span>O OCR não teve certeza aqui. Confira valor, data e categoria antes de exportar.</span>
+    <Sheet title={review && review.total > 1
+                    ? `Conferir cupom ${review.idx} de ${review.total}`
+                    : "Conferir cupom"}
+           onClose={onClose}>
+      {receipt.revisar ? (() => {
+        const motivos = motivosDeRevisao(receipt);
+        return (
+          <div className="banner">
+            <Icon name="warn" size={18} />
+            <span>
+              {motivos.length
+                ? <>Confira antes de exportar — {motivos.join("; ")}.</>
+                : <>O OCR não teve certeza aqui. Confira valor, data e categoria.</>}
+            </span>
+          </div>
+        );
+      })() : review ? (
+        <div className="banner info">
+          <Icon name="check" size={18} />
+          <span>Leitura feita. Confira o valor na foto — o OCR às vezes troca um
+            dígito nos centavos sem perceber.</span>
         </div>
-      )}
+      ) : null}
       {hasImage && (
         <ReceiptImage receipt={receipt} kind="full" className="preview" alt="Foto do cupom"
                       onClick={openZoom} />
@@ -435,8 +493,17 @@ function ReceiptSheet({ receipt, onSaved, onDelete, onClose, push }) {
       <div className="btn-row" style={{ marginTop: 6 }}>
         <button className="btn danger" style={{ flex: "0 0 56px" }} onClick={() => setConfirm(true)}
                 aria-label="Excluir cupom"><Icon name="trash" /></button>
-        <button className="btn primary" onClick={save} disabled={saving}>{saving ? "Salvando…" : "Salvar"}</button>
+        <button className="btn primary" onClick={save} disabled={saving}>
+          {saving ? "Salvando…"
+            : review && review.idx < review.total ? "Salvar e conferir próximo"
+            : "Salvar"}
+        </button>
       </div>
+      {review && review.idx < review.total && (
+        <button className="btn sm block" style={{ marginTop: 8 }} onClick={onClose}>
+          Conferir o resto depois
+        </button>
+      )}
       {confirm && (
         <Confirm text="Excluir este cupom e a imagem dele?"
                  onConfirm={() => { onDelete(receipt.id); onClose(); }} onClose={() => setConfirm(false)} />
@@ -579,6 +646,7 @@ function Home({ trips, profile, onOpen, onNew, onProfile, onSettings }) {
   return (
     <>
       <div className="topbar">
+        <Logo />
         <div style={{ flex: 1, minWidth: 0 }}>
           <h1>Travelness<span className="sub">Prestação de contas de viagens</span></h1>
         </div>
@@ -641,6 +709,8 @@ function TripView({ tripId, profile, features, onBack, onTripsChanged, push }) {
   const [loading, setLoading] = useState(true);
   const [queue, setQueue] = useState([]);
   const [editing, setEditing] = useState(null);
+  const [reviewIds, setReviewIds] = useState([]);   // fila de conferência após um envio
+  const [reviewTotal, setReviewTotal] = useState(0);
   const [sheet, setSheet] = useState(null);
   const [filter, setFilter] = useState("todos");
   const camRef = useRef(null);
@@ -656,7 +726,7 @@ function TripView({ tripId, profile, features, onBack, onTripsChanged, push }) {
   useEffect(() => { load(); }, [load]);
 
   const totals = useMemo(() => {
-    const t = { alimentacao: 0, combustivel: 0, transporte: 0, outros: 0, geral: 0 };
+    const t = { alimentacao: 0, combustivel: 0, transporte: 0, estacionamento: 0, outros: 0, geral: 0 };
     receipts.forEach((r) => { t[r.categoria] += r.valor; t.geral += r.valor; });
     return t;
   }, [receipts]);
@@ -683,6 +753,7 @@ function TripView({ tripId, profile, features, onBack, onTripsChanged, push }) {
     const items = arr.map((f, i) => ({ id: `${Date.now()}-${i}`, name: f.name, file: f, state: "wait" }));
     setQueue((q) => [...q, ...items]);
     let ok = 0, dup = 0;
+    const novos = [];
     for (const it of items) {
       const setState = (patch) => setQueue((q) => q.map((x) => (x.id === it.id ? { ...x, ...patch } : x)));
       setState({ state: "run" });
@@ -695,6 +766,7 @@ function TripView({ tripId, profile, features, onBack, onTripsChanged, push }) {
         });
         setReceipts((rs) => [...rs, d.receipt].sort(
           (a, b) => (a.data || "9").localeCompare(b.data || "9") || a.id - b.id));
+        novos.push(d.receipt);
         ok++;
         setQueue((q) => q.filter((x) => x.id !== it.id));
       } catch (e) {
@@ -706,7 +778,24 @@ function TripView({ tripId, profile, features, onBack, onTripsChanged, push }) {
     else if (dup) push("Esse cupom já estava na lista.", "err");
     onTripsChanged();
     load();
+
+    // Medimos que o Tesseract às vezes erra com confiança alta — trocar o "0"
+    // por "6" nos centavos, por exemplo — e nenhum sinal automático pega isso
+    // de forma confiável. Numa prestação de contas o valor errado é caro, então
+    // todo cupom recém-lido passa por uma olhada humana. Quem está com pressa
+    // usa "Conferir o resto depois"; o selo laranja continua marcando os piores.
+    if (novos.length) {
+      setReviewIds(novos.map((r) => r.id));
+      setReviewTotal(novos.length);
+      setEditing(novos[0]);
+    }
   }, [tripId, push, onTripsChanged, load]);
+
+  const fecharRevisao = useCallback(() => {
+    setEditing(null);
+    setReviewIds([]);
+    setReviewTotal(0);
+  }, []);
 
   const pick = (ref) => () => { ref.current.value = ""; ref.current.click(); };
 
@@ -721,10 +810,17 @@ function TripView({ tripId, profile, features, onBack, onTripsChanged, push }) {
   }
 
   function onReceiptSaved(r) {
-    setReceipts((rs) => rs.map((x) => (x.id === r.id ? r : x))
-      .sort((a, b) => (a.data || "9").localeCompare(b.data || "9") || a.id - b.id));
+    const atualizados = receipts.map((x) => (x.id === r.id ? r : x))
+      .sort((a, b) => (a.data || "9").localeCompare(b.data || "9") || a.id - b.id);
+    setReceipts(atualizados);
     onTripsChanged();
     load();
+
+    const resto = reviewIds.filter((id) => id !== r.id);
+    setReviewIds(resto);
+    const proximo = resto.length ? atualizados.find((x) => x.id === resto[0]) : null;
+    setEditing(proximo || null);
+    if (!proximo) setReviewTotal(0);
   }
   async function removeReceipt(id) {
     await api(`/api/receipts/${id}`, { method: "DELETE" });
@@ -779,6 +875,24 @@ function TripView({ tripId, profile, features, onBack, onTripsChanged, push }) {
           </div>
         ))}
       </div>
+
+      {pend > 0 && !editing && (
+        <div className="banner" style={{ alignItems: "center" }}>
+          <Icon name="warn" size={18} />
+          <span style={{ flex: 1 }}>
+            <b>{pend}</b> {pend === 1 ? "cupom precisa" : "cupons precisam"} de conferência.
+          </span>
+          <button className="btn sm" style={{ flex: "0 0 auto" }}
+                  onClick={() => {
+                    const alvos = receipts.filter((r) => r.revisar);
+                    setReviewIds(alvos.map((r) => r.id));
+                    setReviewTotal(alvos.length);
+                    setEditing(alvos[0]);
+                  }}>
+            Conferir agora
+          </button>
+        </div>
+      )}
 
       {queue.length > 0 && (
         <div className="queue">
@@ -875,8 +989,14 @@ function TripView({ tripId, profile, features, onBack, onTripsChanged, push }) {
       </div>
 
       {editing && (
-        <ReceiptSheet receipt={editing} push={push} onSaved={onReceiptSaved} onDelete={removeReceipt}
-                      onClose={() => setEditing(null)} />
+        /* key força remontagem ao avançar na fila: sem ela o formulário manteria
+           o estado do cupom anterior e gravaria os valores dele no próximo. */
+        <ReceiptSheet key={editing.id}
+                      receipt={editing} push={push} onSaved={onReceiptSaved} onDelete={removeReceipt}
+                      onClose={fecharRevisao}
+                      review={reviewTotal > 0
+                        ? { idx: reviewTotal - reviewIds.length + 1, total: reviewTotal }
+                        : null} />
       )}
       {sheet === "trip" && (
         <TripSheet trip={trip} push={push} onClose={() => setSheet(null)}

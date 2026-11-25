@@ -266,7 +266,15 @@ KEYWORDS = {
         "UBER": 6, "TAXI": 6, "TAXIMETRO": 6, "CORRIDA": 5, "CABIFY": 6, "INDRIVE": 6, "99POP": 6,
         "99 TECNOLOGIA": 6, "99TAXI": 6, "MOTORISTA": 4, "PASSAGEIRO": 4, "BANDEIRA": 3, "PLACA": 2,
         "EMBARQUE": 2, "DESEMBARQUE": 3, "ORIGEM": 2, "DESTINO": 2, "KM RODADO": 3, "VIAGEM": 1,
-        "TRANSPORTE": 3, "COOPERATIVA": 2, "PEDAGIO": 3, "ESTACIONAMENTO": 2,
+        "TRANSPORTE": 3, "COOPERATIVA": 2, "PEDAGIO": 3,
+    },
+    "estacionamento": {
+        "ESTACIONAMENTO": 7, "ESTAPAR": 7, "MULTIPARK": 6, "PARK ": 4, "PARKING": 6,
+        "AUTOPARK": 6, "ZONA AZUL": 6, "ROTATIVO ": 5, "VALET": 6, "MANOBRISTA": 5,
+        "GARAGEM": 5, "VAGA ": 3, "PATIO ": 3, "ENTRADA ": 1, "SAIDA ": 1,
+        "PERMANENCIA": 5, "DIARIA": 2, "1A HORA": 4, "HORA ADICIONAL": 6,
+        "HORAS ADICIONAIS": 6, "TEMPO DE PERMANENCIA": 7, "TOLERANCIA": 4,
+        "CARTAO DE ESTACIONAMENTO": 7, "SHOPPING": 1,
     },
     "alimentacao": {
         "RESTAURANTE": 6, "LANCHONETE": 6, "PADARIA": 5, "CAFE": 3, "CAFETERIA": 5, "REFEICAO": 6,
@@ -347,6 +355,8 @@ def parse_receipt(text: str) -> dict:
         out["descricao"] = f"Corrida {app}" if app else "Táxi"
     elif categoria == "alimentacao":
         out["descricao"] = meal_from_time(hora)
+    elif categoria == "estacionamento":
+        out["descricao"] = "Estacionamento" + (f" – {estab}" if estab else "")
     else:
         out["descricao"] = estab
 

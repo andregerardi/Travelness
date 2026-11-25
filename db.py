@@ -71,7 +71,7 @@ TRIP_FIELDS = ("projeto", "centro_custo", "motivo", "data_inicio", "data_fim",
                "email_destinatario", "adiantamento")
 RECEIPT_FIELDS = ("categoria", "data", "valor", "estabelecimento", "cnpj", "chave_acesso",
                   "descricao", "origem", "destino", "litros", "km", "revisar")
-CATEGORIAS = ("alimentacao", "combustivel", "transporte", "outros")
+CATEGORIAS = ("alimentacao", "combustivel", "transporte", "estacionamento", "outros")
 
 
 def init_db():
@@ -122,6 +122,7 @@ SELECT t.*,
        COALESCE(SUM(CASE WHEN r.categoria='alimentacao' THEN r.valor END), 0) AS total_alimentacao,
        COALESCE(SUM(CASE WHEN r.categoria='combustivel' THEN r.valor END), 0) AS total_combustivel,
        COALESCE(SUM(CASE WHEN r.categoria='transporte'  THEN r.valor END), 0) AS total_transporte,
+       COALESCE(SUM(CASE WHEN r.categoria='estacionamento' THEN r.valor END), 0) AS total_estacionamento,
        COALESCE(SUM(CASE WHEN r.categoria='outros'      THEN r.valor END), 0) AS total_outros
 FROM trips t LEFT JOIN receipts r ON r.trip_id = t.id
 """
@@ -154,10 +155,17 @@ def _clean_trip(data):
     return vals
 
 
+def _check_period(inicio, fim):
+    """O período precisa fazer sentido venha de onde vier — formulário ou API."""
+    if inicio and fim and fim < inicio:
+        raise ValueError("A data de fim não pode ser anterior à de início.")
+
+
 def create_trip(data):
     vals = _clean_trip(data)
     if not vals.get("projeto"):
         raise ValueError("Informe o nome do projeto.")
+    _check_period(vals.get("data_inicio"), vals.get("data_fim"))
     cols = ", ".join(vals)
     with connect() as con:
         cur = con.execute(f"INSERT INTO trips ({cols}) VALUES ({', '.join(':' + k for k in vals)})", vals)
@@ -169,6 +177,9 @@ def update_trip(trip_id, data):
     vals = _clean_trip(data)
     if "projeto" in vals and not vals["projeto"]:
         raise ValueError("Informe o nome do projeto.")
+    atual = get_trip(trip_id) or {}
+    _check_period(vals.get("data_inicio", atual.get("data_inicio")),
+                  vals.get("data_fim", atual.get("data_fim")))
     if vals:
         vals["id"] = trip_id
         sets = ", ".join(f"{k} = :{k}" for k in vals if k != "id")

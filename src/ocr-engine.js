@@ -7,7 +7,8 @@
 
 import { parseReceipt } from "./ocr-parse.js";
 
-const MAX_SIDE = 2000;
+const MAX_SIDE = 2000;      // imagem guardada (e anexada ao PDF)
+const OCR_TARGET = 2200;    // resolução em que o Tesseract lê melhor
 const THUMB_SIDE = 360;
 const TESSERACT_URL = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js";
 
@@ -53,40 +54,75 @@ export async function normalizeImage(file) {
   const src = await decode(file);
   const full = draw(src, MAX_SIDE);
   const thumb = draw(src, THUMB_SIDE);
+  // O canvas do OCR sai direto da foto original: reamostrar duas vezes
+  // (original -> 2000 -> 2200) borra justamente os traços finos do cupom.
+  const srcLong = Math.max(src.width || src.naturalWidth, src.height || src.naturalHeight);
+  const ocr = srcLong > MAX_SIDE ? draw(src, OCR_TARGET) : full;
   const [fullBlob, thumbBlob] = await Promise.all([toBlob(full, 0.82), toBlob(thumb, 0.7)]);
   src.close?.();
-  return { full: fullBlob, thumb: thumbBlob, hash: await sha256(fullBlob), canvas: full };
+  return { full: fullBlob, thumb: thumbBlob, hash: await sha256(fullBlob), canvas: ocr };
 }
 
 /* ------------------------------------------------------- pré-processamento */
-/** Cinza + autocontraste, equivalente ao que o ocr.py faz antes do Tesseract. */
+/**
+ * Foto de cupom quase nunca tem iluminação uniforme: sombra da mão, brilho do
+ * flash, papel térmico desbotado. Um limiar global escurece metade e estoura a
+ * outra. Por isso a binarização aqui é **adaptativa** — cada pixel é comparado
+ * com a média da vizinhança, calculada por imagem integral (O(n), roda rápido
+ * mesmo em celular modesto). É o que mais melhora a leitura na prática.
+ */
 function prepForOcr(canvas) {
-  const scale = Math.max(canvas.width, canvas.height) < 1400
-    ? 1400 / Math.max(canvas.width, canvas.height) : 1;
+  // Tesseract precisa de ~25-30px de altura de letra. Em cupom fotografado,
+  // isso costuma significar 1800-2200px no lado maior.
+  const longSide = Math.max(canvas.width, canvas.height);
+  const scale = longSide < OCR_TARGET ? OCR_TARGET / longSide : 1;
   const c = document.createElement("canvas");
   c.width = Math.round(canvas.width * scale);
   c.height = Math.round(canvas.height * scale);
   const ctx = c.getContext("2d", { willReadFrequently: true });
+  ctx.imageSmoothingQuality = "high";
   ctx.drawImage(canvas, 0, 0, c.width, c.height);
 
-  const img = ctx.getImageData(0, 0, c.width, c.height);
+  const W = c.width, H = c.height, N = W * H;
+  const img = ctx.getImageData(0, 0, W, H);
   const d = img.data;
-  const hist = new Uint32Array(256);
-  for (let i = 0; i < d.length; i += 4) {
-    const g = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0;
-    d[i] = d[i + 1] = d[i + 2] = g;
-    hist[g]++;
+
+  // 1. cinza
+  const gray = new Uint8Array(N);
+  for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+    gray[p] = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0;
   }
-  // descarta 1% das pontas antes de esticar o contraste (cutoff do autocontrast)
-  const total = (d.length / 4) | 0, cut = total * 0.01;
-  let lo = 0, hi = 255, acc = 0;
-  for (let i = 0; i < 256; i++) { acc += hist[i]; if (acc > cut) { lo = i; break; } }
-  acc = 0;
-  for (let i = 255; i >= 0; i--) { acc += hist[i]; if (acc > cut) { hi = i; break; } }
-  if (hi > lo) {
-    const lut = new Uint8Array(256);
-    for (let i = 0; i < 256; i++) lut[i] = Math.max(0, Math.min(255, ((i - lo) * 255) / (hi - lo)));
-    for (let i = 0; i < d.length; i += 4) d[i] = d[i + 1] = d[i + 2] = lut[d[i]];
+
+  // 2. imagem integral (soma de prefixos), em Float64 para não perder precisão
+  const integral = new Float64Array((W + 1) * (H + 1));
+  for (let y = 0; y < H; y++) {
+    let rowSum = 0;
+    for (let x = 0; x < W; x++) {
+      rowSum += gray[y * W + x];
+      integral[(y + 1) * (W + 1) + (x + 1)] = integral[y * (W + 1) + (x + 1)] + rowSum;
+    }
+  }
+
+  // 3. limiar local: janela ~1/24 do lado maior, nunca menor que 15px
+  const win = Math.max(15, Math.round(Math.max(W, H) / 24)) | 1;
+  const r = win >> 1;
+  const K = 0.15;              // quanto abaixo da média local ainda conta como tinta
+  for (let y = 0; y < H; y++) {
+    const y0 = Math.max(0, y - r), y1 = Math.min(H - 1, y + r);
+    for (let x = 0; x < W; x++) {
+      const x0 = Math.max(0, x - r), x1 = Math.min(W - 1, x + r);
+      const area = (x1 - x0 + 1) * (y1 - y0 + 1);
+      const sum = integral[(y1 + 1) * (W + 1) + (x1 + 1)]
+                - integral[y0 * (W + 1) + (x1 + 1)]
+                - integral[(y1 + 1) * (W + 1) + x0]
+                + integral[y0 * (W + 1) + x0];
+      const mean = sum / area;
+      const p = y * W + x;
+      const v = gray[p] > mean * (1 - K) ? 255 : 0;
+      const i = p << 2;
+      d[i] = d[i + 1] = d[i + 2] = v;
+      d[i + 3] = 255;
+    }
   }
   ctx.putImageData(img, 0, 0);
   return c;
@@ -132,15 +168,23 @@ export const ocrReady = () => !!_workerPromise;
 async function recognizeLocal(canvas, onProgress) {
   const worker = await getWorker(onProgress);
   const prepped = prepForOcr(canvas);
-  // psm 4 = colunas de tamanho variável, que é o formato de um cupom
-  await worker.setParameters({ tessedit_pageseg_mode: "4" });
+  // psm 4 = colunas de tamanho variável, que é o formato de um cupom.
+  // preserve_interword_spaces mantém o alinhamento de "DESCRIÇÃO ..... VALOR",
+  // que é justamente o que o parser usa para achar o total.
+  const base = { preserve_interword_spaces: "1", user_defined_dpi: "300" };
+  await worker.setParameters({ ...base, tessedit_pageseg_mode: "4" });
   let { data } = await worker.recognize(prepped);
   let fields = parseReceipt(data.text);
-  if (!fields.valor) { // segunda tentativa com outro layout, igual ao ocr.py
-    await worker.setParameters({ tessedit_pageseg_mode: "6" });
+
+  // Se a primeira passada não achou o essencial, tenta outro layout e fica com
+  // a leitura mais confiante — em cupom amassado isso resolve boa parte.
+  if (!fields.valor || !fields.data || fields.confianca < 0.6) {
+    await worker.setParameters({ ...base, tessedit_pageseg_mode: "6" });
     const retry = await worker.recognize(prepped);
     const f2 = parseReceipt(retry.data.text);
-    if (f2.valor) { data = retry.data; fields = f2; }
+    const melhor = (a, b) => (b.valor ? 1 : 0) - (a.valor ? 1 : 0)
+      || (b.data ? 1 : 0) - (a.data ? 1 : 0) || b.confianca - a.confianca;
+    if (melhor(fields, f2) > 0) { data = retry.data; fields = f2; }
   }
   return { text: data.text, fields, engine: "aparelho" };
 }

@@ -16,8 +16,8 @@ const SOFT = rgb(0.957, 0.969, 0.98);
 const WHITE = rgb(1, 1, 1);
 
 const CAT_LABEL = {
-  alimentacao: "Alimentação", combustivel: "Combustível",
-  transporte: "Transporte", outros: "Outros",
+  alimentacao: "Alimentação", combustivel: "Combustível", transporte: "Transporte",
+  estacionamento: "Estacionamento", outros: "Outros",
 };
 
 export const brl = (v) =>
@@ -99,16 +99,18 @@ export async function buildPdf(profile, trip, receipts, images) {
 
   // caixas por categoria
   y -= mm(4);
-  const bw = (W - 2 * M - 3 * mm(4)) / 4;
-  Object.entries(CAT_LABEL).forEach(([k, lbl], i) => {
-    const x = M + i * (bw + mm(4));
+  const cats = Object.entries(CAT_LABEL);
+  const gap = mm(3);
+  const bw = (W - 2 * M - (cats.length - 1) * gap) / cats.length;
+  cats.forEach(([k, lbl], i) => {
+    const x = M + i * (bw + gap);
     const val = receipts.filter((r) => r.categoria === k).reduce((s, r) => s + r.valor, 0);
     page.drawRectangle({
       x, y: y - mm(16), width: bw, height: mm(16), color: SOFT,
       borderColor: LINE, borderWidth: 1,
     });
-    text(page, lbl.toUpperCase(), x + mm(3), y - mm(6), { size: 8, color: MUTED });
-    text(page, brl(val), x + mm(3), y - mm(12.5), { size: 11, f: bold });
+    text(page, lbl.toUpperCase(), x + mm(2.5), y - mm(6), { size: 7, color: MUTED });
+    text(page, brl(val), x + mm(2.5), y - mm(12.5), { size: 10, f: bold });
   });
   y -= mm(24);
 
