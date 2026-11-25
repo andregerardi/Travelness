@@ -169,6 +169,7 @@ const RECEIPT_DEFAULTS = {
   categoria: "outros", data: "", valor: 0, estabelecimento: "", cnpj: "", chave_acesso: "",
   descricao: "", origem: "", destino: "", litros: null, km: null,
   image_key: "", image_hash: "", ocr_text: "", confianca: 0, revisar: 1,
+  fonte: "",   // "texto do PDF" | "servidor" | "aparelho" | "" (manual)
 };
 const CATEGORIAS = ["alimentacao", "combustivel", "transporte", "estacionamento", "outros"];
 

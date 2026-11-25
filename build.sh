@@ -44,6 +44,13 @@ gen_backend local
 mkdir -p docs
 "$ESBUILD" src/ui.jsx "${COMMON[@]}" "${MIN[@]}" --outfile=.build-web.js
 
+# O pdf.js (~1,6 MB) fica fora do HTML e é carregado só quando aparece um PDF.
+# Sem isso o app inteiro pesaria o triplo para quem só fotografa cupom.
+echo "→ leitor de PDF (sob demanda)"
+"$ESBUILD" src/pdf-read.js --bundle --format=esm --target=es2020 "${MIN[@]}" \
+  --legal-comments=none --outfile=docs/pdf-read.js
+cp node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs docs/pdf.worker.mjs
+
 node build-docs.mjs
 rm -f .build-web.js
 gen_backend server   # deixa a árvore no estado padrão

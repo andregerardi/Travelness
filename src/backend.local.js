@@ -68,7 +68,7 @@ export const backend = {
 
     const receipt = await store.createReceipt(
       tripId,
-      { ...f, ocr_text: res.text, image_hash: res.hash },
+      { ...f, ocr_text: res.text, image_hash: res.hash, fonte: res.engine || "" },
       { full: res.full, thumb: res.thumb },
     );
     return { receipt, engine: res.engine };

@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS receipts (
     image_hash      TEXT NOT NULL DEFAULT '',
     ocr_text        TEXT NOT NULL DEFAULT '',
     confianca       REAL NOT NULL DEFAULT 0,          -- 0..1
+    fonte           TEXT NOT NULL DEFAULT '',         -- texto do PDF|servidor|aparelho
     revisar         INTEGER NOT NULL DEFAULT 1,       -- 1 = precisa de revisão
     created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
@@ -70,7 +71,7 @@ PROFILE_FIELDS = ("nome", "cpf", "email", "banco", "agencia", "conta")
 TRIP_FIELDS = ("projeto", "centro_custo", "motivo", "data_inicio", "data_fim",
                "email_destinatario", "adiantamento")
 RECEIPT_FIELDS = ("categoria", "data", "valor", "estabelecimento", "cnpj", "chave_acesso",
-                  "descricao", "origem", "destino", "litros", "km", "revisar")
+                  "descricao", "origem", "destino", "litros", "km", "revisar", "fonte")
 CATEGORIAS = ("alimentacao", "combustivel", "transporte", "estacionamento", "outros")
 
 
@@ -79,6 +80,10 @@ def init_db():
     with connect() as con:
         con.executescript(SCHEMA)
         con.execute("INSERT OR IGNORE INTO profile (id) VALUES (1)")
+        # bancos criados antes da coluna "fonte" continuam abrindo
+        cols = {r["name"] for r in con.execute("PRAGMA table_info(receipts)")}
+        if "fonte" not in cols:
+            con.execute("ALTER TABLE receipts ADD COLUMN fonte TEXT NOT NULL DEFAULT ''")
 
 
 @contextmanager

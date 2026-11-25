@@ -215,7 +215,68 @@ export async function pingServer(serverUrl, ms = 2500) {
  * Lê um cupom. `settings` decide a rota; o fallback para o aparelho é automático.
  * Devolve { full, thumb, hash, text, fields, engine }.
  */
+/* ---------------------------------------------------------------- PDF */
+let _pdfMod = null;
+/** Carrega o pdf.js só quando aparece um PDF (são ~1,6 MB). */
+async function pdfLib() {
+  if (!_pdfMod) {
+    const url = new URL("pdf-read.js", import.meta.url).href;
+    _pdfMod = import(/* webpackIgnore: true */ url).catch((e) => {
+      _pdfMod = null;
+      throw new Error("Não consegui carregar o leitor de PDF. "
+        + "Conecte-se à internet uma vez para o app guardá-lo. " + (e.message || ""));
+    });
+  }
+  return _pdfMod;
+}
+
+export const isPdf = (bytes) =>
+  bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46;
+
+/**
+ * PDF de recibo (Uber, 99, NFS-e) quase sempre tem camada de texto. Lê-la dá o
+ * valor exato — sem OCR e sem risco de trocar um dígito. Só se o PDF for um
+ * scan a página é rasterizada e mandada para o Tesseract.
+ */
+async function readPdfReceipt(file, buffer, settings, onProgress) {
+  onProgress?.({ phase: "pdf" });
+  const pdf = await pdfLib();
+
+  const texto = await pdf.extrairTexto(buffer.slice(0));
+  if (pdf.temCamadaDeTexto(texto)) {
+    const canvas = await pdf.rasterizarPrimeiraPagina(buffer.slice(0));
+    const { full, thumb, hash } = await canvasParaBlobs(canvas);
+    return { full, thumb, hash, text: texto, fields: parseReceipt(texto), engine: "texto do PDF" };
+  }
+
+  // sem texto: é um scan, então cai no caminho normal de imagem
+  onProgress?.({ phase: "ocr" });
+  const canvas = await pdf.rasterizarPrimeiraPagina(buffer.slice(0));
+  const { full, thumb, hash } = await canvasParaBlobs(canvas);
+  if (settings.useServerOcr && settings.serverUrl) {
+    try {
+      const r = await recognizeServer(full, settings.serverUrl);
+      return { full, thumb, hash, ...r };
+    } catch { onProgress?.({ phase: "fallback" }); }
+  }
+  const r = await recognizeLocal(canvas, onProgress);
+  return { full, thumb, hash, ...r };
+}
+
+/** Guarda a página renderizada como imagem, para ela aparecer no PDF final. */
+async function canvasParaBlobs(canvas) {
+  const full = draw(canvas, MAX_SIDE);
+  const thumb = draw(canvas, THUMB_SIDE);
+  const [fullBlob, thumbBlob] = await Promise.all([toBlob(full, 0.82), toBlob(thumb, 0.7)]);
+  return { full: fullBlob, thumb: thumbBlob, hash: await sha256(fullBlob) };
+}
+
 export async function readReceipt(file, settings = {}, onProgress) {
+  const buffer = await file.arrayBuffer();
+  if (isPdf(new Uint8Array(buffer, 0, 4))) {
+    return readPdfReceipt(file, buffer, settings, onProgress);
+  }
+
   const { full, thumb, hash, canvas } = await normalizeImage(file);
   const useServer = settings.useServerOcr && settings.serverUrl;
 

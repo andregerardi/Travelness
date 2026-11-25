@@ -446,8 +446,13 @@ function ReceiptSheet({ receipt, onSaved, onDelete, onClose, push, review }) {
       })() : review ? (
         <div className="banner info">
           <Icon name="check" size={18} />
-          <span>Leitura feita. Confira o valor na foto — o OCR às vezes troca um
-            dígito nos centavos sem perceber.</span>
+          {receipt.fonte === "texto do PDF" ? (
+            <span>Lido direto do texto do PDF: o valor é exato, não passou por OCR.
+              Só confirme se é esta a despesa.</span>
+          ) : (
+            <span>Leitura feita. Confira o valor na foto — o OCR às vezes troca um
+              dígito nos centavos sem perceber.</span>
+          )}
         </div>
       ) : null}
       {hasImage && (

@@ -62,6 +62,11 @@ def ocr_only():
         return err("Envie uma imagem do cupom.")
     raw = f.read()
     if raw[:4] == b"%PDF":
+        texto = _pdf_text(raw)
+        if _tem_texto(texto):
+            campos = dict(ocr.parse_receipt(texto))
+            campos.pop("_scores", None)
+            return jsonify({"text": texto, "fields": campos, "fonte": "texto do PDF"})
         if not shutil.which("pdftoppm"):
             return err("PDF não suportado neste servidor.")
         raw = _pdf_first_page(raw)
@@ -71,7 +76,7 @@ def ocr_only():
         return err("Não consegui abrir esta imagem.", 415)
     fields = dict(res["fields"])
     fields.pop("_scores", None)
-    return jsonify({"text": res["text"], "fields": fields})
+    return jsonify({"text": res["text"], "fields": fields, "fonte": "servidor"})
 
 
 @app.route("/api/send", methods=["POST", "OPTIONS"])
@@ -199,6 +204,24 @@ def del_trip(tid):
 
 
 # ------------------------------------------------------------------ cupons
+def _pdf_text(raw: bytes) -> str:
+    """Camada de texto do PDF. Recibo de Uber/99 tem — e aí o valor sai exato,
+    sem OCR e sem chance de trocar um dígito."""
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        return ""
+    try:
+        leitor = PdfReader(io.BytesIO(raw))
+        return "\n".join((pg.extract_text() or "") for pg in leitor.pages)
+    except Exception:
+        return ""
+
+
+def _tem_texto(t: str) -> bool:
+    return sum(c.isalpha() for c in t) >= 40
+
+
 def _pdf_first_page(raw: bytes) -> bytes:
     """Converte a 1ª página de um PDF (DANFE, recibo do app) em PNG via poppler."""
     with tempfile.TemporaryDirectory() as d:
@@ -226,7 +249,10 @@ def upload_receipt(tid):
     if not f:
         return err("Envie uma imagem do cupom.")
     raw = f.read()
+    fonte = "servidor"
+    texto_pdf = ""
     if raw[:4] == b"%PDF":
+        texto_pdf = _pdf_text(raw)
         if not shutil.which("pdftoppm"):
             return err("PDF não suportado neste servidor. Envie uma foto ou print do cupom.")
         raw = _pdf_first_page(raw)
@@ -234,6 +260,11 @@ def upload_receipt(tid):
         res = ocr.extract(raw)
     except Exception:
         return err("Não consegui abrir esta imagem. Tente JPG ou PNG.", 415)
+
+    # com camada de texto, ela vale mais que o OCR da página rasterizada
+    if _tem_texto(texto_pdf):
+        res = {**res, "text": texto_pdf, "fields": ocr.parse_receipt(texto_pdf)}
+        fonte = "texto do PDF"
 
     fields = res["fields"]
     dup = db.find_duplicate(tid, res["hash"], fields["chave_acesso"], fields["cnpj"], fields["data"],
@@ -246,7 +277,7 @@ def upload_receipt(tid):
     open(os.path.join(db.UPLOAD_DIR, "thumb_" + name), "wb").write(res["thumb"])
 
     extra = {"image_path": name, "image_hash": res["hash"], "ocr_text": res["text"],
-             "confianca": fields["confianca"], "revisar": fields["revisar"]}
+             "confianca": fields["confianca"], "revisar": fields["revisar"], "fonte": fonte}
     payload = {k: v for k, v in fields.items() if k in db.RECEIPT_FIELDS and k != "revisar"}
     r = db.create_receipt(tid, payload, extra)
     return jsonify({"receipt": r, "hora": fields.get("hora")}), 201

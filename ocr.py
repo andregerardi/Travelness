@@ -101,7 +101,7 @@ TOTAL_KEYS = [  # (regex, prioridade) - menor = melhor
 ]
 TOTAL_EXCLUDE = re.compile(
     r"TRIBUTO|IMPOSTO|LEI\s*12|TROCO|DESCONTO|ACRESC|QTD|QUANT|ITENS|APROX|IBPT|SUBTOTAL|UNIT|ICMS|PIS|COFINS|"
-    r"FEDERAL|ESTADUAL|MUNICIPAL")
+    r"FEDERAL|ESTADUAL|MUNICIPAL|MOTORISTA|PARCEIRO|GANHOS|REPASSE|TAXA DE SERVICO|ISS\b")
 # formas de pagamento: só viram candidato se nada melhor existir (evita pegar o valor entregue em dinheiro)
 PAYMENT = re.compile(r"DINHEIRO|CARTAO|CREDITO|DEBITO|\bPIX\b|VOUCHER|TICKET|ALELO|SODEXO|VR\b|PAGAMENTO|RECEBIDO")
 
@@ -240,6 +240,82 @@ def find_litros(text):
     return float(m.group(1).replace(",", ".")) if m else None
 
 
+# ------------------------------------------- recibos de app de corrida
+# Uber, 99 e similares entregam PDF com camada de texto, então aqui não há erro
+# de leitura — só um formato diferente do cupom fiscal: o endereço vem em blocos
+# "HH:MM" seguidos das linhas do logradouro, e o documento repete a palavra
+# "Total" nas seções de repasse ao motorista e de receita do app.
+RIDE_RE = re.compile(
+    r"\bUBER\b|OBRIGADO POR VIAJAR|INFORMACOES DA VIAGEM|MOTORISTA PARCEIRO|GANHOS D[AO]|"
+    r"\b99\s?(APP|POP|TAXI|TECNOLOGIA)|CABIFY|INDRIVE|DETALHES DA (CORRIDA|VIAGEM)")
+
+
+def is_ride_receipt(text):
+    return bool(RIDE_RE.search(norm(text)))
+
+
+def clean_address(s):
+    """Encurta endereço de app: tira CEP, país e pontuação solta."""
+    s = re.sub(r"\s+", " ", str(s or ""))
+    s = re.sub(r",?\s*\d{5}-?\d{3}\b", "", s)
+    s = re.sub(r",?\s*(Brasil|Brazil)\b\.?", "", s, flags=re.I)
+    return re.sub(r"[\s,;·-]+$", "", s).strip()[:120]
+
+
+SECAO_RE = re.compile(
+    r"^(INFORMACOES|PAGAMENTO|TOTAL|GANHOS|TAXA|VOCE VIAJOU|QUER CONFERIR|PRECO|SUBTOTAL|TODAS AS SUAS)")
+INICIO_VIAGEM_RE = re.compile(
+    r"INFORMACOES DA VIAGEM|DETALHES DA (VIAGEM|CORRIDA)|DADOS DA VIAGEM|TRAJETO|ITINERARIO|PERCURSO")
+RUA_RE = re.compile(
+    r"^(AV|AVENIDA|RUA|R|AL|ALAMEDA|PRACA|PC|TRAVESSA|TV|ROD|RODOVIA|ESTRADA|LARGO|VIA|MARGINAL|"
+    r"SHOPPING|AEROPORTO|TERMINAL)\b")
+HORA_SO_RE = re.compile(r"^\d{1,2}:\d{2}(:\d{2})?$")
+
+
+def find_ride_route(lines):
+    """Origem e destino a partir dos blocos "HH:MM" + endereço."""
+    # O cabeçalho do recibo também traz uma hora solta; começar na seção da
+    # viagem evita capturar a saudação ("Obrigado por viajar, Fulano") como rua.
+    for i, ln in enumerate(lines):
+        if INICIO_VIAGEM_RE.search(norm(ln)):
+            lines = lines[i + 1:]
+            break
+
+    blocos, atual = [], None
+    for ln in lines:
+        t = ln.strip()
+        if HORA_SO_RE.match(t):
+            atual = []
+            blocos.append(atual)
+            continue
+        if atual is None:
+            continue
+        if not t or SECAO_RE.match(norm(t)):
+            atual = None
+            continue
+        atual.append(t)
+        # endereço de app ocupa no máximo três linhas; mais que isso é outra coisa
+        if len(atual) >= 3:
+            atual = None
+
+    # endereço tem número; sem isso é texto de cortesia que mora perto de uma hora
+    enderecos = [e for e in (clean_address(" ".join(b)) for b in blocos)
+                 if len(e) > 8 and re.search(r"\d", e) and ("," in e or RUA_RE.match(norm(e)))]
+    if not enderecos:
+        return "", ""
+    if len(enderecos) == 1:
+        return enderecos[0], ""
+    return enderecos[0], enderecos[-1]
+
+
+KM_RE = re.compile(r"(\d{1,4}[.,]\d{1,2})\s*(QUIL[OÔ]METROS?|\bKMS?\b)")
+
+
+def find_km(text):
+    m = KM_RE.search(norm(text))
+    return float(m.group(1).replace(",", ".")) if m else None
+
+
 def find_route(lines):
     origem = destino = ""
     for i, ln in enumerate(lines):
@@ -334,8 +410,13 @@ def parse_receipt(text: str) -> dict:
             data = date(2000 + int(chave[2:4]), int(chave[4:6]), 1).isoformat()
         except ValueError:
             pass
-    estab = find_establishment(lines)
+    ride = is_ride_receipt(text)
+    # Num recibo de app o topo traz saudação e nome do passageiro, não o
+    # estabelecimento — melhor deixar vazio do que gravar "Obrigado por viajar".
+    estab = "" if ride else find_establishment(lines)
     categoria, conf_cat, scores = classify(text)
+    if ride:
+        categoria, conf_cat = "transporte", max(conf_cat, 1.0)
 
     out = {
         "categoria": categoria, "valor": valor or 0, "data": data, "hora": hora,
@@ -346,7 +427,9 @@ def parse_receipt(text: str) -> dict:
         out["litros"] = find_litros(text)
         out["descricao"] = "Abastecimento" + (f" – {estab}" if estab else "")
     elif categoria == "transporte":
-        out["origem"], out["destino"] = find_route(lines)
+        out["origem"], out["destino"] = (find_ride_route(lines) if ride else find_route(lines))
+        if ride:
+            out["km"] = find_km(text)
         nt = norm(text)
         app = ("Uber" if "UBER" in nt else
                "99" if re.search(r"\b99\s?(APP|POP|TAXI|TECNOLOGIA)", nt) else
@@ -360,8 +443,10 @@ def parse_receipt(text: str) -> dict:
     else:
         out["descricao"] = estab
 
+    # num recibo de app o "contexto" é o trajeto, já que não há estabelecimento
+    tem_contexto = bool(out["origem"] or out["destino"]) if ride else bool(estab or cnpj)
     confianca = (0.40 if valor else 0) * (1 if by_key else 0.6) + (0.25 if data else 0) \
-        + 0.20 * conf_cat + (0.15 if (estab or cnpj) else 0)
+        + 0.20 * conf_cat + (0.15 if tem_contexto else 0)
     out["confianca"] = round(confianca, 2)
     out["revisar"] = int(confianca < 0.75 or not valor or not data or categoria == "outros")
     out["_scores"] = scores

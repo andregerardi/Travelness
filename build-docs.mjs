@@ -68,6 +68,20 @@ self.addEventListener("fetch", (e) => {
   }
 
   if (url.origin !== location.origin) return;
+
+  // O leitor de PDF e seu worker chegam depois do primeiro acesso: guarda na
+  // primeira vez que forem buscados, senão o app perde a leitura de PDF offline.
+  if (/pdf-read\\.js|pdf\\.worker\\.mjs/.test(url.pathname)) {
+    e.respondWith(caches.open(CACHE).then(async (c) => {
+      const hit = await c.match(req);
+      if (hit) return hit;
+      const res = await fetch(req);
+      if (res.ok) c.put(req, res.clone());
+      return res;
+    }));
+    return;
+  }
+
   if (req.mode === "navigate") {
     e.respondWith(fetch(req).then((r) => {
       const copy = r.clone();

@@ -35,7 +35,7 @@ const TOTAL_KEYS = [
   [/\bVALOR\b/, 6],
 ];
 const TOTAL_EXCLUDE =
-  /TRIBUTO|IMPOSTO|LEI\s*12|TROCO|DESCONTO|ACRESC|QTD|QUANT|ITENS|APROX|IBPT|SUBTOTAL|UNIT|ICMS|PIS|COFINS|FEDERAL|ESTADUAL|MUNICIPAL/;
+  /TRIBUTO|IMPOSTO|LEI\s*12|TROCO|DESCONTO|ACRESC|QTD|QUANT|ITENS|APROX|IBPT|SUBTOTAL|UNIT|ICMS|PIS|COFINS|FEDERAL|ESTADUAL|MUNICIPAL|MOTORISTA|PARCEIRO|GANHOS|REPASSE|TAXA DE SERVICO|ISS\b/;
 const PAYMENT =
   /DINHEIRO|CARTAO|CREDITO|DEBITO|\bPIX\b|VOUCHER|TICKET|ALELO|SODEXO|\bVR\b|PAGAMENTO|RECEBIDO/;
 
@@ -169,6 +169,71 @@ export function findLitros(text) {
   return m ? parseFloat(m[1].replace(",", ".")) : null;
 }
 
+/* ------------------------------------------- recibos de app de corrida */
+/* Uber, 99 e similares entregam PDF com camada de texto, então aqui não há
+   erro de leitura — só um formato diferente do cupom fiscal: o endereço vem
+   em blocos "HH:MM" seguidos das linhas do logradouro, e o documento repete
+   a palavra "Total" nas seções de repasse ao motorista e de receita do app. */
+export const RIDE_RE =
+  /\bUBER\b|OBRIGADO POR VIAJAR|INFORMACOES DA VIAGEM|MOTORISTA PARCEIRO|GANHOS D[AO]|\b99\s?(APP|POP|TAXI|TECNOLOGIA)|CABIFY|INDRIVE|DETALHES DA (CORRIDA|VIAGEM)/;
+
+export const isRideReceipt = (text) => RIDE_RE.test(norm(text));
+
+/** Encurta endereço de app: tira CEP, país e pontuação solta. */
+export function cleanAddress(s) {
+  return String(s || "")
+    .replace(/\s+/g, " ")
+    .replace(/,?\s*\d{5}-?\d{3}\b/g, "")
+    .replace(/,?\s*(Brasil|Brazil)\b\.?/gi, "")
+    .replace(/[\s,;·-]+$/, "")
+    .trim()
+    .slice(0, 120);
+}
+
+const SECAO_RE =
+  /^(INFORMACOES|PAGAMENTO|TOTAL|GANHOS|TAXA|VOCE VIAJOU|QUER CONFERIR|PRECO|SUBTOTAL|TODAS AS SUAS)/;
+
+const INICIO_VIAGEM_RE = /INFORMACOES DA VIAGEM|DETALHES DA (VIAGEM|CORRIDA)|DADOS DA VIAGEM|TRAJETO|ITINERARIO|PERCURSO/;
+const RUA_RE =
+  /^(AV|AVENIDA|RUA|R|AL|ALAMEDA|PRACA|PC|TRAVESSA|TV|ROD|RODOVIA|ESTRADA|LARGO|VIA|MARGINAL|SHOPPING|AEROPORTO|TERMINAL)\b/;
+
+/** Origem e destino a partir dos blocos "HH:MM" + endereço. */
+export function findRideRoute(lines) {
+  // O cabeçalho do recibo também traz uma hora solta; começar na seção da
+  // viagem evita capturar a saudação ("Obrigado por viajar, Fulano") como rua.
+  const i0 = lines.findIndex((l) => INICIO_VIAGEM_RE.test(norm(l)));
+  if (i0 >= 0) lines = lines.slice(i0 + 1);
+
+  const blocos = [];
+  let atual = null;
+  for (const ln of lines) {
+    const t = ln.trim();
+    if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(t)) {          // linha só com hora abre um bloco
+      atual = { partes: [] };
+      blocos.push(atual);
+      continue;
+    }
+    if (!atual) continue;
+    if (!t || SECAO_RE.test(norm(t))) { atual = null; continue; }
+    atual.partes.push(t);
+    // endereço de app ocupa no máximo três linhas; mais que isso é outra coisa
+    if (atual.partes.length >= 3) atual = null;
+  }
+  // endereço tem número; sem isso é texto de cortesia que mora perto de uma hora
+  const enderecos = blocos
+    .map((b) => cleanAddress(b.partes.join(" ")))
+    .filter((e) => e.length > 8 && /\d/.test(e) && (/,/.test(e) || RUA_RE.test(norm(e))));
+  if (!enderecos.length) return ["", ""];
+  if (enderecos.length === 1) return [enderecos[0], ""];
+  return [enderecos[0], enderecos[enderecos.length - 1]];
+}
+
+const KM_RE = /(\d{1,4}[.,]\d{1,2})\s*(QUIL[OÔ]METROS?|\bKMS?\b)/;
+export function findKm(text) {
+  const m = KM_RE.exec(norm(text));
+  return m ? parseFloat(m[1].replace(",", ".")) : null;
+}
+
 export function findRoute(lines) {
   let origem = "", destino = "";
   lines.forEach((ln, i) => {
@@ -258,8 +323,12 @@ export function parseReceipt(text) {
     const iso = mkDate(1, chave.slice(4, 6), `20${chave.slice(2, 4)}`);
     if (iso) data = iso;
   }
-  const estab = findEstablishment(lines);
-  const [categoria, confCat] = classify(text);
+  const ride = isRideReceipt(text);
+  // Num recibo de app o topo traz saudação e nome do passageiro, não o
+  // estabelecimento — melhor deixar vazio do que gravar "Obrigado por viajar".
+  const estab = ride ? "" : findEstablishment(lines);
+  let [categoria, confCat] = classify(text);
+  if (ride) { categoria = "transporte"; confCat = Math.max(confCat, 1); }
 
   const out = {
     categoria, valor: valor || 0, data: data || "", hora,
@@ -271,8 +340,9 @@ export function parseReceipt(text) {
     out.litros = findLitros(text);
     out.descricao = "Abastecimento" + (estab ? ` – ${estab}` : "");
   } else if (categoria === "transporte") {
-    const [o, d] = findRoute(lines);
+    const [o, d] = ride ? findRideRoute(lines) : findRoute(lines);
     out.origem = o; out.destino = d;
+    if (ride) out.km = findKm(text);
     const nt = norm(text);
     const app = nt.includes("UBER") ? "Uber"
       : /\b99\s?(APP|POP|TAXI|TECNOLOGIA)/.test(nt) ? "99"
@@ -287,11 +357,13 @@ export function parseReceipt(text) {
     out.descricao = estab;
   }
 
+  // num recibo de app o "contexto" é o trajeto, já que não há estabelecimento
+  const temContexto = ride ? !!(out.origem || out.destino) : !!(estab || cnpj);
   const confianca =
     (valor ? 0.4 : 0) * (byKey ? 1 : 0.6) +
     (data ? 0.25 : 0) +
     0.2 * confCat +
-    (estab || cnpj ? 0.15 : 0);
+    (temContexto ? 0.15 : 0);
   out.confianca = Math.round(confianca * 100) / 100;
   out.revisar = confianca < 0.75 || !valor || !data || categoria === "outros" ? 1 : 0;
   return out;
