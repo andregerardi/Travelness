@@ -75,7 +75,7 @@ export function findTotal(lines) {
 /* ----------------------------------------------------------------- data/hora */
 const MONTHS = { JAN: 1, FEV: 2, MAR: 3, ABR: 4, MAI: 5, JUN: 6, JUL: 7, AGO: 8, SET: 9, OUT: 10, NOV: 11, DEZ: 12 };
 const DATE_RE = /(?:^|\D)(\d{1,2})\s?[/.\-]\s?(\d{1,2})\s?[/.\-]\s?(\d{4}|\d{2})(?!\d)/g;
-const DATE_TXT_RE = /(?:^|\D)(\d{1,2})\s*(?:DE\s+)?(JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)[A-Z]*\.?\s*(?:DE\s+)?(\d{4})/g;
+const DATE_TXT_RE = /(?:^|\D)(\d{1,2})\s*(?:DE\s+)?(JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)[A-Z]*\.?,?\s*(?:DE\s+)?(\d{4})/g;   // "15 de nov. de 2026", "28 out, 2026" (99)
 const TIME_RE = /(?:^|\D)([01]?\d|2[0-3])\s?[:h]\s?([0-5]\d)(?::[0-5]\d)?(?!\d)/;
 
 function mkDate(d, m, y) {
@@ -149,14 +149,23 @@ export function findChave(text) {
 }
 
 /* ----------------------------------------------------------------- campos */
-const SKIP_ESTAB =
-  /CNPJ|CPF|DOCUMENTO|AUXILIAR|CUPOM|NOTA FISCAL|NFC|EXTRATO|SAT\b|CONSUMIDOR|ENDERE|RUA |AV\.|AVENIDA|^IE\b|INSCR|TEL|FONE|RECIBO|COMPROVANTE|ELETRONIC/;
+const SKIP_ESTAB = new RegExp(
+  "CNPJ|CPF|DOCUMENTO|AUXILIAR|CUPOM|NOTA FISCAL|NFC|EXTRATO|SAT\\b|CONSUMIDOR|" +
+  "ENDERE|RUA |AV\\.|AVENIDA|^IE\\b|INSCR|TEL|FONE|RECIBO|COMPROVANTE|ELETRONIC|" +
+  "CODIGO|DESCRI|QTDE?\\b|VALOR UNIT|VL\\.? UN|\\bITEM\\b");  // cabeçalho da tabela de itens
+const APOS_CNPJ_RE = /^.*?CNPJ\s*:?\s*[\d.,/|\-\s]{14,24}/i;
+
+function pareceNome(ln) {
+  const n = norm(ln).trim();
+  const letters = (n.match(/[A-Z]/g) || []).length;
+  return letters >= 4 && letters / Math.max(n.length, 1) > 0.55 && !SKIP_ESTAB.test(n);
+}
 
 export function findEstablishment(lines) {
-  for (const ln of lines.slice(0, 8)) {
-    const n = norm(ln).trim();
-    const letters = (n.match(/[A-Z]/g) || []).length;
-    if (letters >= 4 && letters / Math.max(n.length, 1) > 0.55 && !SKIP_ESTAB.test(n)) {
+  for (let ln of lines.slice(0, 8)) {
+    // o OCR às vezes junta "CNPJ: 45.782.216/0001-94 NICO PANIFICADORA" numa linha só
+    if (norm(ln).includes("CNPJ")) ln = ln.replace(APOS_CNPJ_RE, "");
+    if (pareceNome(ln)) {
       return ln.trim().replace(/^[-*|.:\s]+|[-*|.:\s]+$/g, "").replace(/\s{2,}/g, " ").slice(0, 80);
     }
   }
@@ -191,9 +200,11 @@ export function cleanAddress(s) {
 }
 
 const SECAO_RE =
-  /^(INFORMACOES|PAGAMENTO|TOTAL|GANHOS|TAXA|VOCE VIAJOU|QUER CONFERIR|PRECO|SUBTOTAL|TODAS AS SUAS)/;
+  /^(INFORMACOES|PAGAMENTO|TOTAL|GANHOS|TAXA|VOCE VIAJOU|QUER CONFERIR|PRECO|SUBTOTAL|TODAS AS SUAS|PRECISO|CENTRAL DE AJUDA|TERMOS|DUVIDA|AJUDA)/;
 
-const INICIO_VIAGEM_RE = /INFORMACOES DA VIAGEM|DETALHES DA (VIAGEM|CORRIDA)|DADOS DA VIAGEM|TRAJETO|ITINERARIO|PERCURSO/;
+// "Detalhes" sozinho na linha é o cabeçalho do trajeto no recibo da 99
+const INICIO_VIAGEM_RE = /INFORMACOES DA VIAGEM|DETALHES DA (VIAGEM|CORRIDA)|DADOS DA VIAGEM|TRAJETO|ITINERARIO|PERCURSO|^DETALHES$/;
+const HORA_SO_RE = /^\d{1,2}:\d{2}(:\d{2})?(\s*[AP]\.?\s?M\.?)?$/i;   // "19:04", "08:37 PM"
 const RUA_RE =
   /^(AV|AVENIDA|RUA|R|AL|ALAMEDA|PRACA|PC|TRAVESSA|TV|ROD|RODOVIA|ESTRADA|LARGO|VIA|MARGINAL|SHOPPING|AEROPORTO|TERMINAL)\b/;
 
@@ -202,13 +213,14 @@ export function findRideRoute(lines) {
   // O cabeçalho do recibo também traz uma hora solta; começar na seção da
   // viagem evita capturar a saudação ("Obrigado por viajar, Fulano") como rua.
   const i0 = lines.findIndex((l) => INICIO_VIAGEM_RE.test(norm(l)));
-  if (i0 >= 0) lines = lines.slice(i0 + 1);
+  const naSecao = i0 >= 0;
+  if (naSecao) lines = lines.slice(i0 + 1);
 
   const blocos = [];
   let atual = null;
   for (const ln of lines) {
     const t = ln.trim();
-    if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(t)) {          // linha só com hora abre um bloco
+    if (HORA_SO_RE.test(t)) {          // linha só com hora abre um bloco
       atual = { partes: [] };
       blocos.push(atual);
       continue;
@@ -219,10 +231,13 @@ export function findRideRoute(lines) {
     // endereço de app ocupa no máximo três linhas; mais que isso é outra coisa
     if (atual.partes.length >= 3) atual = null;
   }
-  // endereço tem número; sem isso é texto de cortesia que mora perto de uma hora
+  // Fora da seção do trajeto, endereço precisa ter número — sem isso é texto
+  // de cortesia que mora perto de uma hora. Dentro dela vale nome de lugar
+  // ("Saída Principal", "Hotel Park Tower"), que é como a 99 mostra.
   const enderecos = blocos
     .map((b) => cleanAddress(b.partes.join(" ")))
-    .filter((e) => e.length > 8 && /\d/.test(e) && (/,/.test(e) || RUA_RE.test(norm(e))));
+    .filter((e) => (e.length > 8 && /\d/.test(e) && (/,/.test(e) || RUA_RE.test(norm(e)))) ||
+      (naSecao && (e.match(/[A-Za-zÀ-ÿ]/g) || []).length >= 4));
   if (!enderecos.length) return ["", ""];
   if (enderecos.length === 1) return [enderecos[0], ""];
   return [enderecos[0], enderecos[enderecos.length - 1]];
@@ -283,8 +298,16 @@ const countOf = (hay, needle) => {
   return n;
 };
 
+// Palavras com dígito no meio ("POS70", "GA50L1NA") são letras lidas como
+// número; a versão corrigida entra só como texto extra para a categoria.
+const MISTO_RE = /\b(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{4,}\b/g;
+const DIGITO_LETRA = { 0: "O", 1: "I", 5: "S", 7: "T" };
+const desfazTrocaOcr = (n) =>
+  (n.match(MISTO_RE) || []).map((w) => w.replace(/[0157]/g, (d) => DIGITO_LETRA[d])).join(" ");
+
 export function classify(text) {
-  const n = norm(text);
+  let n = norm(text);
+  n = n + "\n" + desfazTrocaOcr(n);
   const scores = {};
   for (const [cat, kws] of Object.entries(KEYWORDS)) {
     scores[cat] = Object.entries(kws)
@@ -312,6 +335,8 @@ export function mealFromTime(hhmm) {
 }
 
 /* ----------------------------------------------------------------- principal */
+const TOTAL_CORTADO_RE = /(TOTAL|PAGAR|PAGO)\b.*?\d+[,.]\d(?!\d)\s*$/;
+
 export function parseReceipt(text) {
   const lines = (text || "").split("\n").filter((l) => l.trim());
   const [valor, byKey] = findTotal(lines);
@@ -365,6 +390,10 @@ export function parseReceipt(text) {
     0.2 * confCat +
     (temContexto ? 0.15 : 0);
   out.confianca = Math.round(confianca * 100) / 100;
-  out.revisar = confianca < 0.75 || !valor || !data || categoria === "outros" ? 1 : 0;
+  // Total sem rótulo (veio do "maior valor") ou rótulo com o valor cortado
+  // ("TOTAL R$ 74,5") é palpite: pede conferência mesmo com confiança alta.
+  const totalCortado = lines.some((l) => TOTAL_CORTADO_RE.test(norm(l)));
+  out.revisar = confianca < 0.75 || !valor || !data || categoria === "outros" ||
+    !byKey || totalCortado ? 1 : 0;
   return out;
 }

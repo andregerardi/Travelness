@@ -151,37 +151,46 @@ export async function buildPdf(profile, trip, receipts, images) {
     y -= mm(6);
   });
 
-  /* ------------------------------------------------- uma página por nota */
+  /* ------------------------------------------- as páginas de cada nota */
+  /* Um comprovante pode ter várias páginas — recibo de app traz trajeto,
+     pagamento e tributos em folhas separadas, e a prestação de contas precisa
+     anexar o documento inteiro. Cada página vira uma página do PDF. */
   for (let i = 0; i < receipts.length; i++) {
     const r = receipts[i];
-    const p = doc.addPage(A4);
-    p.drawRectangle({ x: 0, y: H - mm(22), width: W, height: mm(22), color: NAVY });
-    text(p, `#${i + 1} · ${CAT_LABEL[r.categoria] || ""} · ${fmtDate(r.data)}`,
-      M, H - mm(10), { size: 12, f: bold, color: WHITE });
-    const val = brl(r.valor);
-    text(p, val, W - M - width(val, bold, 12), H - mm(10), { size: 12, f: bold, color: WHITE });
-    const sub = [r.estabelecimento, r.cnpj && `CNPJ ${r.cnpj}`, r.descricao].filter(Boolean).join(" · ");
-    text(p, clip(sub, font, 9, W - 2 * M), M, H - mm(17), { size: 9, color: WHITE });
+    const paginas = images.get(r.id) || [];
+    const total = Math.max(paginas.length, 1);
 
-    const blob = images.get(r.id);
-    if (blob) {
-      try {
-        const bytes = new Uint8Array(await blob.arrayBuffer());
-        const img = bytes[0] === 0x89 ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
-        const maxw = W - 2 * M;
-        const maxh = H - mm(22) - 2 * M;
-        const s = Math.min(maxw / img.width, maxh / img.height);
-        const dw = img.width * s, dh = img.height * s;
-        p.drawImage(img, { x: (W - dw) / 2, y: M + (maxh - dh) / 2, width: dw, height: dh });
-      } catch {
-        text(p, "Imagem não pôde ser incluída", M, H / 2, { size: 10, color: MUTED });
+    for (let k = 0; k < total; k++) {
+      const p = doc.addPage(A4);
+      p.drawRectangle({ x: 0, y: H - mm(22), width: W, height: mm(22), color: NAVY });
+      const marcador = total > 1 ? ` · pág. ${k + 1}/${total}` : "";
+      text(p, `#${i + 1} · ${CAT_LABEL[r.categoria] || ""} · ${fmtDate(r.data)}${marcador}`,
+        M, H - mm(10), { size: 12, f: bold, color: WHITE });
+      const val = brl(r.valor);
+      text(p, val, W - M - width(val, bold, 12), H - mm(10), { size: 12, f: bold, color: WHITE });
+      const sub = [r.estabelecimento, r.cnpj && `CNPJ ${r.cnpj}`, r.descricao].filter(Boolean).join(" · ");
+      text(p, clip(sub, font, 9, W - 2 * M), M, H - mm(17), { size: 9, color: WHITE });
+
+      const blob = paginas[k];
+      if (blob) {
+        try {
+          const bytes = new Uint8Array(await blob.arrayBuffer());
+          const img = bytes[0] === 0x89 ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
+          const maxw = W - 2 * M;
+          const maxh = H - mm(22) - 2 * M;
+          const s = Math.min(maxw / img.width, maxh / img.height);
+          const dw = img.width * s, dh = img.height * s;
+          p.drawImage(img, { x: (W - dw) / 2, y: M + (maxh - dh) / 2, width: dw, height: dh });
+        } catch {
+          text(p, "Imagem não pôde ser incluída", M, H / 2, { size: 10, color: MUTED });
+        }
+      } else {
+        const t = "Lançamento sem foto";
+        text(p, t, (W - width(t, font, 11)) / 2, H / 2, { size: 11, color: MUTED });
       }
-    } else {
-      const t = "Lançamento sem foto";
-      text(p, t, (W - width(t, font, 11)) / 2, H / 2, { size: 11, color: MUTED });
+      const foot = `Travelness · comprovante ${i + 1}/${receipts.length}`;
+      text(p, foot, W - M - width(foot, font, 7.5), mm(8), { size: 7.5, color: MUTED });
     }
-    const foot = `Travelness · ${i + 1}/${receipts.length}`;
-    text(p, foot, W - M - width(foot, font, 7.5), mm(8), { size: 7.5, color: MUTED });
   }
 
   const bytes = await doc.save();

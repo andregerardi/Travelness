@@ -91,9 +91,9 @@ const PATHS = {
   gear: "M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM19.4 13a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-3-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0-1.2-2.9H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.2-3l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 2.9-1.2V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 3 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0 1.2 2.9H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z",
   cloud: "M7 18a4 4 0 0 1-.4-8 5.5 5.5 0 0 1 10.6-1.3A3.8 3.8 0 0 1 18 18z",
 };
-const Icon = ({ name, size = 20 }) => (
+const Icon = ({ name, size = 20, style }) => (
   <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor"
-       strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+       strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={style}>
     <path d={PATHS[name] || ""} />
   </svg>
 );
@@ -149,13 +149,14 @@ const Confirm = ({ text, confirmLabel = "Excluir", onConfirm, onClose }) => (
 );
 
 /** Imagem do cupom: URL direta no servidor, objeto do IndexedDB no app local. */
-function ReceiptImage({ receipt, kind = "thumb", className, alt = "", onClick }) {
+function ReceiptImage({ receipt, kind = "thumb", pagina = 1, className, alt = "", onClick }) {
   const [src, setSrc] = useState(null);
   useEffect(() => {
     let live = true;
-    backend.loadImage(receipt, kind).then((u) => live && setSrc(u)).catch(() => {});
+    setSrc(null);
+    backend.loadImage(receipt, kind, pagina).then((u) => live && setSrc(u)).catch(() => {});
     return () => { live = false; };
-  }, [receipt.id, receipt.image_key, receipt.image_path, kind]);
+  }, [receipt.id, receipt.image_key, receipt.image_path, kind, pagina]);
   if (!src) return <div className={className}><Icon name="pencil" size={18} /></div>;
   return <img className={className} src={src} alt={alt} loading="lazy" onClick={onClick} />;
 }
@@ -401,6 +402,8 @@ function ReceiptSheet({ receipt, onSaved, onDelete, onClose, push, review }) {
   });
   const [saving, setSaving] = useState(false);
   const [zoom, setZoom] = useState(null);
+  const [pagina, setPagina] = useState(1);
+  const totalPaginas = receipt.paginas || 1;
   const [confirm, setConfirm] = useState(false);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const hasImage = !!(receipt.image_key || receipt.image_path);
@@ -422,7 +425,7 @@ function ReceiptSheet({ receipt, onSaved, onDelete, onClose, push, review }) {
   }
 
   async function openZoom() {
-    const u = await backend.loadImage(receipt, "full");
+    const u = await backend.loadImage(receipt, "full", pagina);
     if (u) setZoom(u);
   }
 
@@ -456,8 +459,23 @@ function ReceiptSheet({ receipt, onSaved, onDelete, onClose, push, review }) {
         </div>
       ) : null}
       {hasImage && (
-        <ReceiptImage receipt={receipt} kind="full" className="preview" alt="Foto do cupom"
-                      onClick={openZoom} />
+        <>
+          <ReceiptImage receipt={receipt} kind="full" pagina={pagina} className="preview"
+                        alt={`Comprovante, página ${pagina}`} onClick={openZoom} />
+          {totalPaginas > 1 && (
+            <div className="pager">
+              <button className="iconbtn" onClick={() => setPagina((n) => Math.max(1, n - 1))}
+                      disabled={pagina === 1} aria-label="Página anterior">
+                <Icon name="back" size={18} />
+              </button>
+              <span>Página {pagina} de {totalPaginas}</span>
+              <button className="iconbtn" onClick={() => setPagina((n) => Math.min(totalPaginas, n + 1))}
+                      disabled={pagina === totalPaginas} aria-label="Próxima página">
+                <Icon name="back" size={18} style={{ transform: "rotate(180deg)" }} />
+              </button>
+            </div>
+          )}
+        </>
       )}
       {zoom && <div className="lightbox" onClick={() => setZoom(null)}><img src={zoom} alt="" /></div>}
 
@@ -958,6 +976,9 @@ function TripView({ tripId, profile, features, onBack, onTripsChanged, push }) {
                     {r.revisar
                       ? <span className="chip warn"><Icon name="pending" size={11} /> conferir</span>
                       : r.estabelecimento && r.descricao ? <span>{r.estabelecimento}</span> : null}
+                    {(r.paginas || 1) > 1 && (
+                      <span className="chip"><Icon name="file" size={11} /> {r.paginas} págs.</span>
+                    )}
                   </div>
                 </div>
                 <div className="val">{brl(r.valor)}</div>

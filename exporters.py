@@ -309,6 +309,21 @@ MUTED = colors.HexColor("#6B7686")
 LINE = colors.HexColor("#D7DEE7")
 
 
+def _paginas_do_comprovante(r):
+    """Caminhos de todas as páginas gravadas para um cupom, na ordem."""
+    nome = r.get("image_path") or ""
+    if not nome:
+        return []
+    base = nome[:-4] if nome.endswith(".jpg") else nome
+    caminhos = []
+    for n in range(1, (r.get("paginas") or 1) + 1):
+        arq = nome if n == 1 else f"{base}-p{n}.jpg"
+        caminho = os.path.join(UPLOAD_DIR, arq)
+        if os.path.exists(caminho):
+            caminhos.append(caminho)
+    return caminhos
+
+
 def build_pdf(profile, trip, receipts) -> bytes:
     buf = io.BytesIO()
     W, H = A4
@@ -412,33 +427,38 @@ def build_pdf(profile, trip, receipts) -> bytes:
         y -= 6 * mm
     c.showPage()
 
-    # ---------- uma página por comprovante
+    # ---------- as páginas de cada comprovante
+    # Um comprovante pode ter várias páginas: recibo de app traz trajeto,
+    # pagamento e tributos em folhas separadas, e todas precisam ser anexadas.
     for i, r in enumerate(receipts, 1):
-        c.setFillColor(NAVY)
-        c.rect(0, H - 22 * mm, W, 22 * mm, fill=1, stroke=0)
-        c.setFillColor(colors.white)
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(M, H - 10 * mm, f"#{i} · {CAT_LABEL.get(r['categoria'], '')} · {fmt_date(r['data'])}")
-        c.drawRightString(W - M, H - 10 * mm, brl(r["valor"]))
-        c.setFont("Helvetica", 9)
-        sub = " · ".join(x for x in (r["estabelecimento"], r["cnpj"] and f"CNPJ {r['cnpj']}",
-                                     r["descricao"]) if x)
-        c.drawString(M, H - 17 * mm, _clip(sub, "Helvetica", 9, W - 2 * M, c))
-        path = os.path.join(UPLOAD_DIR, r["image_path"]) if r["image_path"] else ""
-        if path and os.path.exists(path):
-            img = ImageReader(path)
-            iw, ih = img.getSize()
-            maxw, maxh = W - 2 * M, H - 22 * mm - 2 * M
-            s = min(maxw / iw, maxh / ih)
-            dw, dh = iw * s, ih * s
-            c.drawImage(img, (W - dw) / 2, M + (maxh - dh) / 2, dw, dh)
-        else:
+        caminhos = _paginas_do_comprovante(r)
+        for k, path in enumerate(caminhos or [None], start=1):
+            c.setFillColor(NAVY)
+            c.rect(0, H - 22 * mm, W, 22 * mm, fill=1, stroke=0)
+            c.setFillColor(colors.white)
+            c.setFont("Helvetica-Bold", 12)
+            marcador = f" · pág. {k}/{len(caminhos)}" if len(caminhos) > 1 else ""
+            c.drawString(M, H - 10 * mm,
+                         f"#{i} · {CAT_LABEL.get(r['categoria'], '')} · {fmt_date(r['data'])}{marcador}")
+            c.drawRightString(W - M, H - 10 * mm, brl(r["valor"]))
+            c.setFont("Helvetica", 9)
+            sub = " · ".join(x for x in (r["estabelecimento"], r["cnpj"] and f"CNPJ {r['cnpj']}",
+                                         r["descricao"]) if x)
+            c.drawString(M, H - 17 * mm, _clip(sub, "Helvetica", 9, W - 2 * M, c))
+            if path:
+                img = ImageReader(path)
+                iw, ih = img.getSize()
+                maxw, maxh = W - 2 * M, H - 22 * mm - 2 * M
+                s = min(maxw / iw, maxh / ih)
+                dw, dh = iw * s, ih * s
+                c.drawImage(img, (W - dw) / 2, M + (maxh - dh) / 2, dw, dh)
+            else:
+                c.setFillColor(MUTED)
+                c.drawCentredString(W / 2, H / 2, "Imagem não disponível")
+            c.setFont("Helvetica", 7.5)
             c.setFillColor(MUTED)
-            c.drawCentredString(W / 2, H / 2, "Imagem não disponível")
-        c.setFont("Helvetica", 7.5)
-        c.setFillColor(MUTED)
-        c.drawRightString(W - M, 8 * mm, f"Travelness · {i}/{len(receipts)}")
-        c.showPage()
+            c.drawRightString(W - M, 8 * mm, f"Travelness · comprovante {i}/{len(receipts)}")
+            c.showPage()
     c.save()
     return buf.getvalue()
 

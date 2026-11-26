@@ -1,11 +1,18 @@
 /* Normalização de imagem (canvas) e leitura do cupom.
 
-   Duas rotas de OCR:
-     1. servidor Flask, quando configurado e alcançável — rápido (~1s), não gasta bateria;
-     2. Tesseract.js no próprio aparelho — funciona em qualquer lugar, 3-8s por cupom.
-   A rota 2 é sempre o fallback: se o servidor não responder, o app não trava. */
+   Rotas de OCR:
+     1. servidor Flask, quando configurado e alcançável — rápido, não gasta bateria;
+     2. PaddleOCR no próprio aparelho (onnxruntime-web) — bem mais preciso em foto;
+     3. Tesseract.js — reserva, se o Paddle não carregar (navegador antigo, sem
+        internet na primeira vez) ou não achar nem valor nem data.
+   Nenhuma rota trava o app: cada uma cai para a seguinte. */
 
 import { parseReceipt } from "./ocr-parse.js";
+import { paddleOcr, carregaPaddle, paddleCarregado } from "./paddle-ocr.js";
+
+// Os modelos ficam em models/, ao lado do app (docs/ no Pages, /static no Flask).
+const BASE = import.meta.url;
+const PADDLE_MAX = 3000;     // lado maior que vai para o Paddle (os recortes saem daqui)
 
 const MAX_SIDE = 2000;      // imagem guardada (e anexada ao PDF)
 const OCR_TARGET = 2200;    // resolução em que o Tesseract lê melhor
@@ -162,10 +169,30 @@ async function getWorker(onProgress) {
   return _workerPromise;
 }
 
-export async function warmUpOcr(onProgress) { await getWorker(onProgress); }
-export const ocrReady = () => !!_workerPromise;
+/** Pré-carrega o OCR do aparelho (Paddle; se falhar, o Tesseract). */
+export async function warmUpOcr(onProgress) {
+  try { await carregaPaddle(BASE, onProgress); } catch { await getWorker(onProgress); }
+}
+export const ocrReady = () => paddleCarregado() || !!_workerPromise;
+
+const melhorLeitura = (a, b) => (b.valor ? 1 : 0) - (a.valor ? 1 : 0)
+  || (b.data ? 1 : 0) - (a.data ? 1 : 0) || b.confianca - a.confianca;
 
 async function recognizeLocal(canvas, onProgress) {
+  let paddle = null;
+  try {
+    const src = Math.max(canvas.width, canvas.height) > PADDLE_MAX ? draw(canvas, PADDLE_MAX) : canvas;
+    const r = await paddleOcr(src, BASE, onProgress);
+    paddle = { text: r.text, fields: parseReceipt(r.text), engine: "aparelho" };
+    if (paddle.fields.valor || paddle.fields.data) return paddle;
+  } catch (e) {
+    console.warn("PaddleOCR indisponível, usando Tesseract:", e);
+  }
+  const tess = await recognizeTesseract(canvas, onProgress);
+  return paddle && melhorLeitura(tess.fields, paddle.fields) > 0 ? paddle : tess;
+}
+
+async function recognizeTesseract(canvas, onProgress) {
   const worker = await getWorker(onProgress);
   const prepped = prepForOcr(canvas);
   // psm 4 = colunas de tamanho variável, que é o formato de um cupom.
@@ -182,9 +209,7 @@ async function recognizeLocal(canvas, onProgress) {
     await worker.setParameters({ ...base, tessedit_pageseg_mode: "6" });
     const retry = await worker.recognize(prepped);
     const f2 = parseReceipt(retry.data.text);
-    const melhor = (a, b) => (b.valor ? 1 : 0) - (a.valor ? 1 : 0)
-      || (b.data ? 1 : 0) - (a.data ? 1 : 0) || b.confianca - a.confianca;
-    if (melhor(fields, f2) > 0) { data = retry.data; fields = f2; }
+    if (melhorLeitura(fields, f2) > 0) { data = retry.data; fields = f2; }
   }
   return { text: data.text, fields, engine: "aparelho" };
 }
@@ -236,39 +261,39 @@ export const isPdf = (bytes) =>
 /**
  * PDF de recibo (Uber, 99, NFS-e) quase sempre tem camada de texto. Lê-la dá o
  * valor exato — sem OCR e sem risco de trocar um dígito. Só se o PDF for um
- * scan a página é rasterizada e mandada para o Tesseract.
+ * scan a página é rasterizada e mandada para o OCR.
  */
 async function readPdfReceipt(file, buffer, settings, onProgress) {
   onProgress?.({ phase: "pdf" });
   const pdf = await pdfLib();
 
   const texto = await pdf.extrairTexto(buffer.slice(0));
+  const { canvases } = await pdf.rasterizarPaginas(buffer.slice(0), onProgress);
+  const { full, thumb, hash } = await canvasParaBlobs(canvases);
+
   if (pdf.temCamadaDeTexto(texto)) {
-    const canvas = await pdf.rasterizarPrimeiraPagina(buffer.slice(0));
-    const { full, thumb, hash } = await canvasParaBlobs(canvas);
     return { full, thumb, hash, text: texto, fields: parseReceipt(texto), engine: "texto do PDF" };
   }
 
-  // sem texto: é um scan, então cai no caminho normal de imagem
+  // sem camada de texto é um scan: o OCR lê a primeira página, mas todas ficam guardadas
   onProgress?.({ phase: "ocr" });
-  const canvas = await pdf.rasterizarPrimeiraPagina(buffer.slice(0));
-  const { full, thumb, hash } = await canvasParaBlobs(canvas);
   if (settings.useServerOcr && settings.serverUrl) {
     try {
-      const r = await recognizeServer(full, settings.serverUrl);
+      const r = await recognizeServer(full[0], settings.serverUrl);
       return { full, thumb, hash, ...r };
     } catch { onProgress?.({ phase: "fallback" }); }
   }
-  const r = await recognizeLocal(canvas, onProgress);
+  const r = await recognizeLocal(canvases[0], onProgress);
   return { full, thumb, hash, ...r };
 }
 
-/** Guarda a página renderizada como imagem, para ela aparecer no PDF final. */
-async function canvasParaBlobs(canvas) {
-  const full = draw(canvas, MAX_SIDE);
-  const thumb = draw(canvas, THUMB_SIDE);
-  const [fullBlob, thumbBlob] = await Promise.all([toBlob(full, 0.82), toBlob(thumb, 0.7)]);
-  return { full: fullBlob, thumb: thumbBlob, hash: await sha256(fullBlob) };
+/** Guarda as páginas renderizadas como imagens, para elas irem ao PDF final. */
+async function canvasParaBlobs(canvases) {
+  const blobs = [];
+  for (const c of canvases) blobs.push(await toBlob(draw(c, MAX_SIDE), 0.82));
+  const thumb = await toBlob(draw(canvases[0], THUMB_SIDE), 0.7);
+  // o hash identifica o documento pela primeira página, que basta para duplicata
+  return { full: blobs, thumb, hash: await sha256(blobs[0]) };
 }
 
 export async function readReceipt(file, settings = {}, onProgress) {

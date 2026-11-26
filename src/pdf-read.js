@@ -64,22 +64,38 @@ export async function extrairTexto(buffer) {
   return texto;
 }
 
-/** Rasteriza a primeira página, para o caso de PDF escaneado. */
-export async function rasterizarPrimeiraPagina(buffer) {
-  const tarefa = abrir(buffer);
-  const doc = await tarefa.promise;
-  const pagina = await doc.getPage(1);
+const MAX_PAGINAS = 20;   // trava de segurança: recibo não tem 200 páginas
+
+async function desenhaPagina(doc, n) {
+  const pagina = await doc.getPage(n);
   const viewport = pagina.getViewport({ scale: RENDER_SCALE });
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(viewport.width);
   canvas.height = Math.round(viewport.height);
   const ctx = canvas.getContext("2d", { alpha: false });
-  ctx.fillStyle = "#fff";
+  ctx.fillStyle = "#fff";                       // PDF sem fundo sai preto no JPEG
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   await pagina.render({ canvasContext: ctx, viewport, background: "#fff" }).promise;
   pagina.cleanup();
-  await tarefa.destroy();
   return canvas;
+}
+
+/**
+ * Rasteriza todas as páginas. O comprovante vale como documento inteiro —
+ * num recibo de app as páginas seguintes trazem trajeto, pagamento e tributos,
+ * e a prestação de contas precisa anexar tudo, não só a primeira folha.
+ */
+export async function rasterizarPaginas(buffer, onProgress) {
+  const tarefa = abrir(buffer);
+  const doc = await tarefa.promise;
+  const total = Math.min(doc.numPages, MAX_PAGINAS);
+  const canvases = [];
+  for (let n = 1; n <= total; n++) {
+    onProgress?.({ phase: "render", pagina: n, total });
+    canvases.push(await desenhaPagina(doc, n));
+  }
+  await tarefa.destroy();
+  return { canvases, totalNoPdf: doc.numPages };
 }
 
 /** Texto útil = tem letras suficientes para valer a pena pular o OCR. */

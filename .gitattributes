@@ -1,0 +1,6 @@
+# Modelos e imagens são binários: sem conversão de fim de linha no Windows
+*.onnx binary
+*.png binary
+*.jpg binary
+*.pdf binary
+docs/models/*.txt -text

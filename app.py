@@ -69,7 +69,7 @@ def ocr_only():
             return jsonify({"text": texto, "fields": campos, "fonte": "texto do PDF"})
         if not shutil.which("pdftoppm"):
             return err("PDF não suportado neste servidor.")
-        raw = _pdf_first_page(raw)
+        raw = _pdf_pages(raw)[0]
     try:
         res = ocr.extract(raw)
     except Exception:
@@ -222,17 +222,25 @@ def _tem_texto(t: str) -> bool:
     return sum(c.isalpha() for c in t) >= 40
 
 
-def _pdf_first_page(raw: bytes) -> bytes:
-    """Converte a 1ª página de um PDF (DANFE, recibo do app) em PNG via poppler."""
+MAX_PAGINAS = 20   # trava de segurança: recibo não tem 200 páginas
+
+
+def _pdf_pages(raw: bytes) -> list:
+    """Converte todas as páginas do PDF em PNG via poppler.
+
+    O comprovante vale como documento inteiro — num recibo de app as páginas
+    seguintes trazem trajeto, pagamento e tributos.
+    """
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "in.pdf")
         open(src, "wb").write(raw)
-        subprocess.run(["pdftoppm", "-png", "-r", "200", "-f", "1", "-l", "1", src, os.path.join(d, "p")],
-                       check=True, timeout=60, capture_output=True)
-        pngs = [f for f in os.listdir(d) if f.endswith(".png")]
+        subprocess.run(["pdftoppm", "-png", "-r", "200", "-f", "1", "-l", str(MAX_PAGINAS),
+                        src, os.path.join(d, "p")],
+                       check=True, timeout=180, capture_output=True)
+        pngs = sorted(f for f in os.listdir(d) if f.endswith(".png"))
         if not pngs:
             raise ValueError("Não foi possível ler o PDF.")
-        return open(os.path.join(d, pngs[0]), "rb").read()
+        return [open(os.path.join(d, f), "rb").read() for f in pngs]
 
 
 @app.post("/api/trips/<int:tid>/receipts")
@@ -251,11 +259,13 @@ def upload_receipt(tid):
     raw = f.read()
     fonte = "servidor"
     texto_pdf = ""
+    paginas_extra = []
     if raw[:4] == b"%PDF":
         texto_pdf = _pdf_text(raw)
         if not shutil.which("pdftoppm"):
             return err("PDF não suportado neste servidor. Envie uma foto ou print do cupom.")
-        raw = _pdf_first_page(raw)
+        paginas = _pdf_pages(raw)
+        raw, paginas_extra = paginas[0], paginas[1:]
     try:
         res = ocr.extract(raw)
     except Exception:
@@ -275,9 +285,14 @@ def upload_receipt(tid):
     name = f"{uuid.uuid4().hex}.jpg"
     open(os.path.join(db.UPLOAD_DIR, name), "wb").write(res["jpeg"])
     open(os.path.join(db.UPLOAD_DIR, "thumb_" + name), "wb").write(res["thumb"])
+    base = name[:-4]
+    for i, pagina in enumerate(paginas_extra, start=2):
+        extra_jpeg, _, _, _ = ocr.normalize_image(pagina)
+        open(os.path.join(db.UPLOAD_DIR, f"{base}-p{i}.jpg"), "wb").write(extra_jpeg)
 
     extra = {"image_path": name, "image_hash": res["hash"], "ocr_text": res["text"],
-             "confianca": fields["confianca"], "revisar": fields["revisar"], "fonte": fonte}
+             "confianca": fields["confianca"], "revisar": fields["revisar"], "fonte": fonte,
+             "paginas": 1 + len(paginas_extra)}
     payload = {k: v for k, v in fields.items() if k in db.RECEIPT_FIELDS and k != "revisar"}
     r = db.create_receipt(tid, payload, extra)
     return jsonify({"receipt": r, "hora": fields.get("hora")}), 201

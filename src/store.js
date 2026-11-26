@@ -155,10 +155,7 @@ export async function deleteTrip(id) {
     const rs = await wrap(t.objectStore("receipts").index("trip_id").getAll(id));
     for (const r of rs) {
       t.objectStore("receipts").delete(r.id);
-      if (r.image_key) {
-        t.objectStore("images").delete(r.image_key);
-        t.objectStore("images").delete(`thumb_${r.image_key}`);
-      }
+      apagaImagens(t.objectStore("images"), r);
     }
     t.objectStore("trips").delete(id);
   });
@@ -169,6 +166,7 @@ const RECEIPT_DEFAULTS = {
   categoria: "outros", data: "", valor: 0, estabelecimento: "", cnpj: "", chave_acesso: "",
   descricao: "", origem: "", destino: "", litros: null, km: null,
   image_key: "", image_hash: "", ocr_text: "", confianca: 0, revisar: 1,
+  paginas: 1,  // PDF de recibo costuma ter mais de uma; guardamos todas
   fonte: "",   // "texto do PDF" | "servidor" | "aparelho" | "" (manual)
 };
 const CATEGORIAS = ["alimentacao", "combustivel", "transporte", "estacionamento", "outros"];
@@ -198,13 +196,21 @@ export async function findDuplicate(tripId, hash, chave, cnpj, data, valor) {
   return hit ? hit.id : null;
 }
 
+/** Chave da página n. A página 1 mantém a chave original, para não quebrar
+    cupons gravados antes de existir suporte a várias páginas. */
+export const pageKey = (key, n) => (n <= 1 ? key : `${key}-p${n}`);
+
 export async function createReceipt(tripId, data, blobs) {
   const v = { ...RECEIPT_DEFAULTS, ...cleanReceipt(data), trip_id: tripId };
   if (blobs) {
     v.image_key = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    // blobs.full pode ser um blob só (foto) ou a lista de páginas (PDF)
+    const paginas = Array.isArray(blobs.full) ? blobs.full : [blobs.full];
+    v.paginas = paginas.length;
     await tx(["images"], "readwrite", (t) => {
-      t.objectStore("images").put(blobs.full, v.image_key);
-      t.objectStore("images").put(blobs.thumb, `thumb_${v.image_key}`);
+      const st = t.objectStore("images");
+      paginas.forEach((b, i) => st.put(b, pageKey(v.image_key, i + 1)));
+      st.put(blobs.thumb, `thumb_${v.image_key}`);   // miniatura só da 1ª página
     });
   }
   const now = new Date().toISOString();
@@ -225,14 +231,18 @@ export async function updateReceipt(id, data) {
   });
 }
 
+/** Apaga a miniatura e todas as páginas de um cupom. */
+function apagaImagens(store, r) {
+  if (!r?.image_key) return;
+  store.delete(`thumb_${r.image_key}`);
+  for (let n = 1; n <= (r.paginas || 1); n++) store.delete(pageKey(r.image_key, n));
+}
+
 export async function deleteReceipt(id) {
   await tx(["receipts", "images"], "readwrite", async (t) => {
     const s = t.objectStore("receipts");
     const r = await wrap(s.get(id));
-    if (r?.image_key) {
-      t.objectStore("images").delete(r.image_key);
-      t.objectStore("images").delete(`thumb_${r.image_key}`);
-    }
+    apagaImagens(t.objectStore("images"), r);
     s.delete(id);
   });
 }

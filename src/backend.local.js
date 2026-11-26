@@ -74,9 +74,11 @@ export const backend = {
     return { receipt, engine: res.engine };
   },
 
-  async loadImage(receipt, kind = "thumb") {
+  async loadImage(receipt, kind = "thumb", pagina = 1) {
     if (!receipt.image_key) return null;
-    const key = kind === "thumb" ? `thumb_${receipt.image_key}` : receipt.image_key;
+    const key = kind === "thumb"
+      ? `thumb_${receipt.image_key}`
+      : store.pageKey(receipt.image_key, pagina);
     if (urlCache.has(key)) return urlCache.get(key);
     const blob = await store.getImage(key);
     if (!blob) return null;
@@ -96,10 +98,13 @@ export const backend = {
     }
     const images = new Map();
     for (const r of receipts) {
-      if (r.image_key) {
-        const b = await store.getImage(r.image_key);
-        if (b) images.set(r.id, b);
+      if (!r.image_key) continue;
+      const paginas = [];
+      for (let n = 1; n <= (r.paginas || 1); n++) {
+        const b = await store.getImage(store.pageKey(r.image_key, n));
+        if (b) paginas.push(b);
       }
+      if (paginas.length) images.set(r.id, paginas);
     }
     return {
       blob: await buildPdf(profile, trip, receipts, images),

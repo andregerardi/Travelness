@@ -7,7 +7,9 @@ classifica em **alimentação / combustível / transporte / outros** e entrega d
 
 1. **Planilha Excel** no layout de prestação de contas (seções A/B/C, fechamento, dados
    bancários e campos de assinatura) + uma aba tabular com um cupom por linha.
-2. **PDF** com capa, resumo por categoria, índice e **uma página por comprovante**.
+2. **PDF** com capa, resumo por categoria, índice e **todas as páginas de cada
+   comprovante** — recibo de app traz trajeto, pagamento e tributos em folhas
+   separadas, e a prestação de contas precisa do documento inteiro.
 
 ## 👉 Usar agora
 
@@ -26,10 +28,10 @@ O mesmo código roda de dois jeitos, a partir das mesmas fontes em `src/`:
 |---|---|---|
 | Onde roda | navegador do celular | sua máquina / rede local |
 | Onde ficam os dados | IndexedDB, no aparelho | SQLite, em `data/` |
-| OCR | Tesseract.js (3–8s por cupom) | Tesseract nativo (~1s) |
+| OCR | PaddleOCR no aparelho (Tesseract.js de reserva) | PaddleOCR (Tesseract de reserva) |
 | Planilha e PDF | gerados no navegador | gerados no servidor |
 | E-mail | precisa do servidor | SMTP direto |
-| Instalação | nenhuma | Python + Tesseract |
+| Instalação | nenhuma (1º uso baixa ~31 MB de modelos, depois funciona offline) | Python (+ Tesseract opcional) |
 
 Os dois são independentes. Se você usar só o app estático, nunca precisa ligar o servidor —
 só perde o OCR rápido e o envio automático por e-mail (o botão de compartilhar do celular
@@ -90,11 +92,14 @@ src/                  fontes do front-end (as duas versões saem daqui)
   backend.local.js      IndexedDB + OCR + exportadores, tudo no navegador
   store.js              persistência IndexedDB
   ocr-parse.js          extração dos campos (porte fiel de ocr.py)
-  ocr-engine.js         Tesseract.js + rota opcional pelo servidor
+  ocr-engine.js         rotas de OCR: servidor → PaddleOCR → Tesseract.js
+  paddle-ocr.js         PaddleOCR (PP-OCRv6) via onnxruntime-web
+  pdf-read.js           texto e páginas de PDF (pdf.js, carregado sob demanda)
   xlsx.js  pdf.js       geradores no navegador
 docs/                 app estático publicado (gerado por build.sh)
 static/ templates/    versão servidor
-app.py db.py ocr.py exporters.py mailer.py    backend Flask
+docs/models/           modelos ONNX do PaddleOCR (usados pelo app e pelo servidor)
+app.py db.py ocr.py paddle_ocr.py exporters.py mailer.py    backend Flask
 build.sh build-docs.mjs                        compilação
 ```
 
@@ -115,6 +120,15 @@ usar o app não precisa de nada.
 
 ## Como o OCR decide
 
+**Leitura do texto.** Fotos passam pelo **PaddleOCR (PP-OCRv6 small)**, uma rede treinada
+para texto em foto — inclinado, amassado, com sombra. Num teste com 11 cupons fotografados
+ele acertou o valor em 10 (o 11º tinha o total cortado na foto e foi marcado "a conferir");
+o Tesseract acertou 3. No celular ele roda com onnxruntime-web; os modelos ficam em
+`docs/models/` e o service worker os guarda no primeiro uso. Se o Paddle não carregar
+(navegador antigo, sem internet na primeira vez), o app cai para o Tesseract.js sozinho.
+PDF com camada de texto (Uber, 99) não passa por OCR: o texto é lido direto do arquivo.
+
+
 | Campo | Como é obtido |
 |---|---|
 | Valor | linhas com `TOTAL`, `VALOR A PAGAR`, `VALOR TOTAL`…, por prioridade. Ignora tributos, troco, subtotal e desconto. Formas de pagamento (dinheiro, cartão, PIX) só entram se nada melhor existir |
@@ -126,7 +140,8 @@ usar o app não precisa de nada.
 
 | Categoria | `alimentacao`, `combustivel`, `transporte`, `estacionamento`, `outros` — estacionamento cobre recibo e cupom fiscal (Estapar, zona azul, valet, garagem) |
 
-Cada cupom recebe uma **confiança de 0 a 1**. Abaixo de 0,75, ou faltando valor/data, ele
+Cada cupom recebe uma **confiança de 0 a 1**. Abaixo de 0,75, faltando valor/data, com o total
+sem rótulo ("maior valor do cupom") ou com o valor do total cortado, ele
 ganha o selo laranja **"a conferir"**, com filtro próprio e aviso na exportação.
 
 **Toda leitura passa por conferência humana.** Depois de cada envio o app abre a fila de

@@ -36,9 +36,11 @@ export const backend = {
     return call(`/api/trips/${tripId}/receipts`, { method: "POST", form });
   },
 
-  async loadImage(receipt, kind = "thumb") {
+  async loadImage(receipt, kind = "thumb", pagina = 1) {
     if (!receipt.image_path) return null;
-    return kind === "thumb" ? `/uploads/thumb_${receipt.image_path}` : `/uploads/${receipt.image_path}`;
+    if (kind === "thumb") return `/uploads/thumb_${receipt.image_path}`;
+    if (pagina <= 1) return `/uploads/${receipt.image_path}`;
+    return `/uploads/${receipt.image_path.replace(/\.jpg$/, "")}-p${pagina}.jpg`;
   },
 
   async buildExport(tripId, kind) {

@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS receipts (
     ocr_text        TEXT NOT NULL DEFAULT '',
     confianca       REAL NOT NULL DEFAULT 0,          -- 0..1
     fonte           TEXT NOT NULL DEFAULT '',         -- texto do PDF|servidor|aparelho
+    paginas         INTEGER NOT NULL DEFAULT 1,       -- PDF pode ter várias
     revisar         INTEGER NOT NULL DEFAULT 1,       -- 1 = precisa de revisão
     created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
@@ -71,7 +72,7 @@ PROFILE_FIELDS = ("nome", "cpf", "email", "banco", "agencia", "conta")
 TRIP_FIELDS = ("projeto", "centro_custo", "motivo", "data_inicio", "data_fim",
                "email_destinatario", "adiantamento")
 RECEIPT_FIELDS = ("categoria", "data", "valor", "estabelecimento", "cnpj", "chave_acesso",
-                  "descricao", "origem", "destino", "litros", "km", "revisar", "fonte")
+                  "descricao", "origem", "destino", "litros", "km", "revisar", "fonte", "paginas")
 CATEGORIAS = ("alimentacao", "combustivel", "transporte", "estacionamento", "outros")
 
 
@@ -84,6 +85,8 @@ def init_db():
         cols = {r["name"] for r in con.execute("PRAGMA table_info(receipts)")}
         if "fonte" not in cols:
             con.execute("ALTER TABLE receipts ADD COLUMN fonte TEXT NOT NULL DEFAULT ''")
+        if "paginas" not in cols:
+            con.execute("ALTER TABLE receipts ADD COLUMN paginas INTEGER NOT NULL DEFAULT 1")
 
 
 @contextmanager
@@ -194,11 +197,11 @@ def update_trip(trip_id, data):
 
 
 def delete_trip(trip_id):
-    paths = [r["image_path"] for r in list_receipts(trip_id)]
+    imagens = [(r["image_path"], r["paginas"]) for r in list_receipts(trip_id)]
     with connect() as con:
         con.execute("DELETE FROM trips WHERE id = ?", (trip_id,))
-    for p in paths:
-        _remove_image(p)
+    for nome, paginas in imagens:
+        _remove_image(nome, paginas)
 
 
 # ---------- receipts ----------
@@ -277,13 +280,18 @@ def delete_receipt(rid):
     with connect() as con:
         con.execute("DELETE FROM receipts WHERE id = ?", (rid,))
     if r:
-        _remove_image(r["image_path"])
+        _remove_image(r["image_path"], r["paginas"])
 
 
-def _remove_image(name):
+def _remove_image(name, paginas=1):
+    """Apaga a miniatura e todas as páginas do comprovante."""
     if not name:
         return
-    for p in (os.path.join(UPLOAD_DIR, name), os.path.join(UPLOAD_DIR, "thumb_" + name)):
+    alvos = [os.path.join(UPLOAD_DIR, "thumb_" + name), os.path.join(UPLOAD_DIR, name)]
+    base = name[:-4] if name.endswith(".jpg") else name
+    for i in range(2, (paginas or 1) + 1):
+        alvos.append(os.path.join(UPLOAD_DIR, f"{base}-p{i}.jpg"))
+    for p in alvos:
         try:
             os.remove(p)
         except FileNotFoundError:

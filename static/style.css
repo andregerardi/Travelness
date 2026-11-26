@@ -252,6 +252,13 @@ input[type="file"] { display: none; }
 .lightbox { position: fixed; inset: 0; z-index: 70; background: #000; display: grid; place-items: center; }
 .lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; }
 
+.pager {
+  display: flex; align-items: center; justify-content: center; gap: 14px;
+  margin: -6px 0 14px; font-size: 13.5px; color: var(--ink-2); font-weight: 600;
+}
+.pager .iconbtn { width: 36px; height: 36px; flex: 0 0 36px; }
+.pager .iconbtn[disabled] { opacity: .35; pointer-events: none; }
+
 /* ---------- toast ---------- */
 .toasts {
   position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(86px + var(--safe-b));

@@ -22,6 +22,12 @@ try:
 except Exception:  # pragma: no cover - ambiente sem tesseract
     HAS_TESSERACT = False
 
+try:
+    import paddle_ocr
+    HAS_PADDLE = paddle_ocr.disponivel()
+except Exception:  # pragma: no cover - sem onnxruntime/opencv
+    HAS_PADDLE = False
+
 MAX_SIDE = 2000      # lado máximo da imagem armazenada
 THUMB_SIDE = 360
 
@@ -141,8 +147,8 @@ def find_total(lines):
 MONTHS = {"JAN": 1, "FEV": 2, "MAR": 3, "ABR": 4, "MAI": 5, "JUN": 6, "JUL": 7, "AGO": 8,
           "SET": 9, "OUT": 10, "NOV": 11, "DEZ": 12}
 DATE_RE = re.compile(r"(?<!\d)(\d{1,2})\s?[/.\-]\s?(\d{1,2})\s?[/.\-]\s?(\d{4}|\d{2})(?!\d)")
-DATE_TXT_RE = re.compile(r"(?<!\d)(\d{1,2})\s*(?:DE\s+)?(JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)[A-Z]*\.?"
-                         r"\s*(?:DE\s+)?(\d{4})")
+DATE_TXT_RE = re.compile(r"(?<!\d)(\d{1,2})\s*(?:DE\s+)?(JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)[A-Z]*\.?,?"
+                         r"\s*(?:DE\s+)?(\d{4})")  # "15 de nov. de 2026", "28 out, 2026" (99)
 TIME_RE = re.compile(r"(?<!\d)([01]?\d|2[0-3])\s?[:h]\s?([0-5]\d)(?::[0-5]\d)?(?!\d)")
 
 
@@ -221,13 +227,25 @@ def find_chave(text):
     return ""
 
 
+SKIP_ESTAB = re.compile(
+    r"CNPJ|CPF|DOCUMENTO|AUXILIAR|CUPOM|NOTA FISCAL|NFC|EXTRATO|SAT\b|CONSUMIDOR|"
+    r"ENDERE|RUA |AV\.|AVENIDA|^IE\b|INSCR|TEL|FONE|RECIBO|COMPROVANTE|ELETRONIC|"
+    r"CODIGO|DESCRI|QTDE?\b|VALOR UNIT|VL\.? UN|\bITEM\b")  # cabeçalho da tabela de itens
+APOS_CNPJ_RE = re.compile(r"^.*?CNPJ\s*:?\s*[\d.,/|\-\s]{14,24}", re.I)
+
+
+def _parece_nome(ln):
+    n = norm(ln).strip()
+    letters = sum(c.isalpha() for c in n)
+    return letters >= 4 and letters / max(len(n), 1) > 0.55 and not SKIP_ESTAB.search(n)
+
+
 def find_establishment(lines):
-    skip = re.compile(r"CNPJ|CPF|DOCUMENTO|AUXILIAR|CUPOM|NOTA FISCAL|NFC|EXTRATO|SAT\b|CONSUMIDOR|"
-                      r"ENDERE|RUA |AV\.|AVENIDA|^IE\b|INSCR|TEL|FONE|RECIBO|COMPROVANTE|ELETRONIC")
     for ln in lines[:8]:
-        n = norm(ln).strip()
-        letters = sum(c.isalpha() for c in n)
-        if letters >= 4 and letters / max(len(n), 1) > 0.55 and not skip.search(n):
+        # o OCR às vezes junta "CNPJ: 45.782.216/0001-94 NICO PANIFICADORA" numa linha só
+        if "CNPJ" in norm(ln):
+            ln = APOS_CNPJ_RE.sub("", ln)
+        if _parece_nome(ln):
             return re.sub(r"\s{2,}", " ", ln.strip(" -*|.:"))[:80]
     return ""
 
@@ -263,22 +281,25 @@ def clean_address(s):
 
 
 SECAO_RE = re.compile(
-    r"^(INFORMACOES|PAGAMENTO|TOTAL|GANHOS|TAXA|VOCE VIAJOU|QUER CONFERIR|PRECO|SUBTOTAL|TODAS AS SUAS)")
+    r"^(INFORMACOES|PAGAMENTO|TOTAL|GANHOS|TAXA|VOCE VIAJOU|QUER CONFERIR|PRECO|SUBTOTAL|TODAS AS SUAS|"
+    r"PRECISO|CENTRAL DE AJUDA|TERMOS|DUVIDA|AJUDA)")
 INICIO_VIAGEM_RE = re.compile(
-    r"INFORMACOES DA VIAGEM|DETALHES DA (VIAGEM|CORRIDA)|DADOS DA VIAGEM|TRAJETO|ITINERARIO|PERCURSO")
+    r"INFORMACOES DA VIAGEM|DETALHES DA (VIAGEM|CORRIDA)|DADOS DA VIAGEM|TRAJETO|ITINERARIO|PERCURSO|^DETALHES$")
 RUA_RE = re.compile(
     r"^(AV|AVENIDA|RUA|R|AL|ALAMEDA|PRACA|PC|TRAVESSA|TV|ROD|RODOVIA|ESTRADA|LARGO|VIA|MARGINAL|"
     r"SHOPPING|AEROPORTO|TERMINAL)\b")
-HORA_SO_RE = re.compile(r"^\d{1,2}:\d{2}(:\d{2})?$")
+HORA_SO_RE = re.compile(r"^\d{1,2}:\d{2}(:\d{2})?(\s*[AP]\.?\s?M\.?)?$", re.I)  # "08:37 PM" (99)
 
 
 def find_ride_route(lines):
     """Origem e destino a partir dos blocos "HH:MM" + endereço."""
     # O cabeçalho do recibo também traz uma hora solta; começar na seção da
     # viagem evita capturar a saudação ("Obrigado por viajar, Fulano") como rua.
+    na_secao = False
     for i, ln in enumerate(lines):
         if INICIO_VIAGEM_RE.search(norm(ln)):
             lines = lines[i + 1:]
+            na_secao = True
             break
 
     blocos, atual = [], None
@@ -298,9 +319,12 @@ def find_ride_route(lines):
         if len(atual) >= 3:
             atual = None
 
-    # endereço tem número; sem isso é texto de cortesia que mora perto de uma hora
+    # Fora da seção do trajeto, endereço precisa ter número — sem isso é texto
+    # de cortesia que mora perto de uma hora. Dentro dela vale nome de lugar
+    # ("Saída Principal", "Hotel Park Tower"), que é como a 99 mostra.
     enderecos = [e for e in (clean_address(" ".join(b)) for b in blocos)
-                 if len(e) > 8 and re.search(r"\d", e) and ("," in e or RUA_RE.match(norm(e)))]
+                 if (len(e) > 8 and re.search(r"\d", e) and ("," in e or RUA_RE.match(norm(e))))
+                 or (na_secao and len(re.findall(r"[A-Za-zÀ-ÿ]", e)) >= 4)]
     if not enderecos:
         return "", ""
     if len(enderecos) == 1:
@@ -364,8 +388,19 @@ KEYWORDS = {
 }
 
 
+MISTO_RE = re.compile(r"\b(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{4,}\b")
+DIGITO_LETRA = str.maketrans("0157", "OIST")
+
+
+def _desfaz_troca_ocr(n):
+    """Palavras com dígito no meio ("POS70", "GA50L1NA") são letras lidas como
+    número; a versão corrigida entra só como texto extra para a categoria."""
+    return " ".join(m.group(0).translate(DIGITO_LETRA) for m in MISTO_RE.finditer(n))
+
+
 def classify(text):
     n = norm(text)
+    n = n + "\n" + _desfaz_troca_ocr(n)
     scores = {cat: sum(w * min(n.count(k), 3) for k, w in kws.items()) for cat, kws in KEYWORDS.items()}
     # "99" sozinho é ambíguo; só pontua se aparecer como app
     if re.search(r"\b99\s?(APP|POP|TAXI|TECNOLOGIA)", n):
@@ -397,6 +432,9 @@ def meal_from_time(hhmm):
 
 
 # ------------------------------------------------------------------ orquestração
+TOTAL_CORTADO_RE = re.compile(r"(TOTAL|PAGAR|PAGO)\b.*?\d+[,.]\d(?!\d)\s*$")
+
+
 def parse_receipt(text: str) -> dict:
     lines = [ln for ln in (text or "").splitlines() if ln.strip()]
     valor, by_key = find_total(lines)
@@ -448,7 +486,11 @@ def parse_receipt(text: str) -> dict:
     confianca = (0.40 if valor else 0) * (1 if by_key else 0.6) + (0.25 if data else 0) \
         + 0.20 * conf_cat + (0.15 if tem_contexto else 0)
     out["confianca"] = round(confianca, 2)
-    out["revisar"] = int(confianca < 0.75 or not valor or not data or categoria == "outros")
+    # Total sem rótulo (veio do "maior valor") ou rótulo com o valor cortado
+    # ("TOTAL R$ 74,5") é palpite: pede conferência mesmo com confiança alta.
+    total_cortado = any(TOTAL_CORTADO_RE.search(norm(l)) for l in lines)
+    out["revisar"] = int(confianca < 0.75 or not valor or not data or categoria == "outros"
+                         or not by_key or total_cortado)
     out["_scores"] = scores
     return out
 
@@ -456,6 +498,15 @@ def parse_receipt(text: str) -> dict:
 def extract(raw: bytes) -> dict:
     """Ponto de entrada: bytes da imagem -> dicionário com imagem normalizada + campos."""
     jpeg, thumb, sha, img = normalize_image(raw)
+    # PaddleOCR primeiro (bem mais preciso em foto); Tesseract se ele faltar ou falhar
+    if HAS_PADDLE:
+        try:
+            text = paddle_ocr.ler(img)
+            fields = parse_receipt(text)
+            if fields["valor"] or fields["data"] or not HAS_TESSERACT:
+                return {"jpeg": jpeg, "thumb": thumb, "hash": sha, "text": text, "fields": fields}
+        except Exception as e:  # pragma: no cover - modelo corrompido, falta de memória
+            print("PaddleOCR falhou, usando Tesseract:", e)
     text = run_ocr(img, psm=4)
     fields = parse_receipt(text)
     if not fields["valor"] and HAS_TESSERACT:  # segunda tentativa com outro layout
